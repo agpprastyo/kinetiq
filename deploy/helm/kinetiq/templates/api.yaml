@@ -1,0 +1,47 @@
+{{- $ctx := dict "root" . "component" "api" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-api
+  labels: {{- include "kinetiq.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicas }}
+  {{- end }}
+  selector:
+    matchLabels: {{- include "kinetiq.selector" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "kinetiq.selector" $ctx | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      {{- include "kinetiq.antiAffinity" $ctx | nindent 6 }}
+      containers:
+        - name: api
+          image: {{ include "kinetiq.image" (dict "root" . "name" "api") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/app/kinetiq-api"]
+          ports:
+            - containerPort: {{ .Values.api.port }}
+          {{- include "kinetiq.backendEnv" . | nindent 10 }}
+            - name: PORT
+              value: {{ .Values.api.port | quote }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: {{ .Values.api.port }} }
+          readinessProbe:
+            httpGet: { path: /readyz, port: {{ .Values.api.port }} }
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-api
+  labels: {{- include "kinetiq.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "kinetiq.selector" $ctx | nindent 4 }}
+  ports:
+    - port: {{ .Values.api.port }}
+      targetPort: {{ .Values.api.port }}
+---
+{{ include "kinetiq.pdb" (dict "root" . "component" "api" "values" .Values.api) }}

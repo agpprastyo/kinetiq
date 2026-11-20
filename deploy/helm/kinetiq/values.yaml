@@ -1,0 +1,59 @@
+# Postgres and Redis are external (managed DB / operator / bitnami charts).
+# Secrets are never stored here: create a Secret and reference it via existingSecret.
+#   kubectl create secret generic kinetiq-secrets \
+#     --from-literal=DATABASE_URL=... --from-literal=DATABASE_READ_REPLICA_URL=... \
+#     --from-literal=REDIS_URL=... --from-literal=AUTH_INTERNAL_SECRET=... \
+#     --from-literal=BETTER_AUTH_SECRET=...
+existingSecret: kinetiq-secrets
+
+image:
+  registry: ghcr.io/kinetiq
+  tag: ""          # defaults to Chart.appVersion
+  pullPolicy: IfNotPresent
+
+redis:
+  sentinelAddrs: ""   # e.g. "redis-sentinel-0:26379,redis-sentinel-1:26379,redis-sentinel-2:26379"
+  sentinelMaster: ""  # e.g. "mymaster"
+
+config:
+  APP_ENV: production
+  LOG_LEVEL: info
+  AUTH_BASE_URL: http://{{ .Release.Name }}-auth:3001
+  PUBLIC_APP_URL: https://kinetiq.example.com
+  WEB_ORIGIN: https://kinetiq.example.com
+
+api:
+  replicas: 2
+  port: 8080
+  resources:
+    requests: { cpu: 250m, memory: 256Mi, ephemeral-storage: 64Mi }
+    limits: { memory: 512Mi, ephemeral-storage: 256Mi }
+  autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 70 }
+  pdb: { minAvailable: 1 }
+
+worker:
+  replicas: 2
+  resources:
+    requests: { cpu: 250m, memory: 256Mi, ephemeral-storage: 64Mi }
+    limits: { memory: 512Mi, ephemeral-storage: 256Mi }
+  autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 70 }
+  pdb: { minAvailable: 1 }
+
+auth:
+  replicas: 2
+  port: 3001
+  resources:
+    requests: { cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi }
+    limits: { memory: 256Mi, ephemeral-storage: 256Mi }
+  pdb: { minAvailable: 1 }
+
+web:
+  replicas: 2
+  port: 5173
+  env:
+    PUBLIC_API_URL: https://kinetiq.example.com/api/v1
+    PUBLIC_AUTH_URL: https://kinetiq.example.com/auth
+  resources:
+    requests: { cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi }
+    limits: { memory: 256Mi, ephemeral-storage: 256Mi }
+  pdb: { minAvailable: 1 }

@@ -1,0 +1,46 @@
+name: Publish Docker Images
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - service: api
+            context: apps/api
+            dockerfile: apps/api/Dockerfile
+            image: ghcr.io/agpprastyo/kinetiq-api
+          - service: auth
+            context: apps/auth
+            dockerfile: apps/auth/Dockerfile
+            image: ghcr.io/agpprastyo/kinetiq-auth
+          - service: web
+            context: apps/web
+            dockerfile: apps/web/Dockerfile
+            image: ghcr.io/agpprastyo/kinetiq-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ matrix.image }}:latest
+            ${{ matrix.image }}:${{ github.ref_name }}

@@ -1,0 +1,3 @@
+ALTER TABLE alert_rules
+DROP COLUMN IF EXISTS snoozed_until,
+DROP COLUMN IF EXISTS status;

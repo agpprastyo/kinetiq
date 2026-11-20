@@ -1,0 +1,183 @@
+# HA reference stack: Postgres primary + streaming replica, Redis master/replica + 3 Sentinels,
+# 2x api, 2x worker. Required env (see .env.example): POSTGRES_PASSWORD, REPLICATION_PASSWORD,
+# REDIS_PASSWORD, BETTER_AUTH_SECRET, AUTH_INTERNAL_SECRET.
+x-sentinel: &sentinel
+  image: redis:7-alpine
+  restart: unless-stopped
+  depends_on:
+    redis-master:
+      condition: service_healthy
+  environment:
+    REDIS_PASSWORD: ${REDIS_PASSWORD}
+  command:
+    - sh
+    - -c
+    - |
+      cat > /tmp/sentinel.conf <<EOF
+      port 26379
+      sentinel monitor kinetiq redis-master 6379 2
+      sentinel auth-pass kinetiq $$REDIS_PASSWORD
+      sentinel down-after-milliseconds kinetiq 5000
+      sentinel failover-timeout kinetiq 15000
+      sentinel resolve-hostnames yes
+      sentinel announce-hostnames yes
+      EOF
+      exec redis-server /tmp/sentinel.conf --sentinel
+  healthcheck:
+    test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+
+x-api-env: &api-env
+  DATABASE_URL: postgres://kinetiq:${POSTGRES_PASSWORD}@postgres-primary:5432/kinetiq?sslmode=disable
+  DATABASE_READ_REPLICA_URL: postgres://kinetiq:${POSTGRES_PASSWORD}@postgres-replica:5432/kinetiq?sslmode=disable
+  REDIS_URL: redis://:${REDIS_PASSWORD}@redis-master:6379/0
+  REDIS_SENTINEL_ADDRS: sentinel-1:26379,sentinel-2:26379,sentinel-3:26379
+  REDIS_SENTINEL_MASTER: kinetiq
+  AUTH_BASE_URL: http://auth:3001
+  AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET}
+
+services:
+  postgres-primary:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kinetiq
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: kinetiq
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD}
+    command: ["postgres", "-c", "wal_level=replica", "-c", "max_wal_senders=10", "-c", "hot_standby=on"]
+    volumes:
+      - pg_primary:/var/lib/postgresql/data
+      - ../../docker/postgres-init:/docker-entrypoint-initdb.d/base:ro
+      - ../../migrations/auth:/docker-entrypoint-initdb.d/auth:ro
+      - ../../migrations/app:/docker-entrypoint-initdb.d/app:ro
+      - ./postgres-replication-init.sh:/docker-entrypoint-initdb.d/99-replication.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kinetiq -d kinetiq"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres-replica:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    environment:
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD}
+    user: postgres
+    entrypoint:
+      - sh
+      - -c
+      - |
+        if [ ! -s /var/lib/postgresql/data/PG_VERSION ]; then
+          PGPASSWORD="$$REPLICATION_PASSWORD" pg_basebackup -h postgres-primary -U replicator \
+            -D /var/lib/postgresql/data -R -X stream
+          chmod 700 /var/lib/postgresql/data
+        fi
+        exec postgres -c hot_standby=on
+    volumes:
+      - pg_replica:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kinetiq"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis-master:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\""]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis-replica:
+    image: redis:7-alpine
+    restart: unless-stopped
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --masterauth \"$$REDIS_PASSWORD\" --replicaof redis-master 6379"]
+
+  sentinel-1:
+    <<: *sentinel
+  sentinel-2:
+    <<: *sentinel
+  sentinel-3:
+    <<: *sentinel
+
+  auth:
+    build:
+      context: ../../apps/auth
+    restart: unless-stopped
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    environment:
+      PORT: "3001"
+      DATABASE_URL: postgres://kinetiq:${POSTGRES_PASSWORD}@postgres-primary:5432/kinetiq?sslmode=disable
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3001}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
+
+  api:
+    build:
+      context: ../../apps/api
+    restart: unless-stopped
+    command: ["/app/kinetiq-api"]
+    stop_grace_period: 30s
+    deploy:
+      replicas: 2
+    depends_on:
+      postgres-replica:
+        condition: service_healthy
+      sentinel-1:
+        condition: service_healthy
+    environment:
+      <<: *api-env
+      PORT: "8080"
+    expose:
+      - "8080"
+
+  worker:
+    build:
+      context: ../../apps/api
+    restart: unless-stopped
+    command: ["/app/kinetiq-worker"]
+    stop_grace_period: 30s
+    deploy:
+      replicas: 2
+    depends_on:
+      postgres-replica:
+        condition: service_healthy
+      sentinel-1:
+        condition: service_healthy
+    environment:
+      <<: *api-env
+
+  web:
+    build:
+      context: ../../apps/web
+    restart: unless-stopped
+    depends_on:
+      - api
+      - auth
+    environment:
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080/api/v1}
+      PUBLIC_AUTH_URL: ${PUBLIC_AUTH_URL:-http://localhost:3001}
+    ports:
+      - "5173:5173"
+
+volumes:
+  pg_primary:
+  pg_replica:

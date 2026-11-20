@@ -1,0 +1,53 @@
+name: Unit Tests
+
+on:
+  push:
+
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-test:
+    name: Go Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for Code Changes
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          else
+            CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "apps/api/all")
+          fi
+          
+          CODE_CHANGED=$(echo "$CHANGED" | grep -vE '(\.md$|(^docs/|^apps/docs/)|^\.github/pull_request_template\.md|^\.gitignore$)' || true)
+          if [ -z "$CODE_CHANGED" ]; then
+            echo "has_code_changes=false" >> $GITHUB_OUTPUT
+            echo "Only documentation/markdown files modified. Fast-passing."
+          else
+            echo "has_code_changes=true" >> $GITHUB_OUTPUT
+            echo "Code files modified:"
+            echo "$CODE_CHANGED"
+          fi
+
+      - name: Setup Go
+        if: steps.filter.outputs.has_code_changes == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache: true
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Run Unit Tests
+        if: steps.filter.outputs.has_code_changes == 'true'
+        run: make test-unit

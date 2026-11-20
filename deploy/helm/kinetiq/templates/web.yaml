@@ -1,0 +1,43 @@
+{{- $ctx := dict "root" . "component" "web" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-web
+  labels: {{- include "kinetiq.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels: {{- include "kinetiq.selector" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "kinetiq.selector" $ctx | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- include "kinetiq.antiAffinity" $ctx | nindent 6 }}
+      containers:
+        - name: web
+          image: {{ include "kinetiq.image" (dict "root" . "name" "web") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.web.port }}
+          env:
+            {{- range $k, $v := .Values.web.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          readinessProbe:
+            tcpSocket: { port: {{ .Values.web.port }} }
+          resources: {{- toYaml .Values.web.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-web
+  labels: {{- include "kinetiq.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "kinetiq.selector" $ctx | nindent 4 }}
+  ports:
+    - port: {{ .Values.web.port }}
+      targetPort: {{ .Values.web.port }}
+---
+{{ include "kinetiq.pdb" (dict "root" . "component" "web" "values" .Values.web) }}

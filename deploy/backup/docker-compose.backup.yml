@@ -1,0 +1,37 @@
+services:
+  kinetiq-backup:
+    image: alpine:3.20
+    container_name: kinetiq-backup-cron
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-}
+      BACKUP_CRON: ${BACKUP_CRON:-0 2 * * *}
+      BACKUP_DIR: ${BACKUP_DIR:-/var/backups/kinetiq}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+      BACKUP_S3_PREFIX: ${BACKUP_S3_PREFIX:-kinetiq-backups}
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-auto}
+    volumes:
+      - ../../scripts/backup-postgres.sh:/usr/local/bin/backup-postgres.sh:ro
+      - ../../scripts/restore-postgres.sh:/usr/local/bin/restore-postgres.sh:ro
+      - kinetiq_backups:/var/backups/kinetiq
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache bash postgresql16-client aws-cli coreutils >/dev/null && \
+        printf '%s /usr/local/bin/backup-postgres.sh >> /var/log/kinetiq-backup.log 2>&1\n' "$${BACKUP_CRON}" | crontab - && \
+        touch /var/log/kinetiq-backup.log && \
+        crond -f -l 8
+    networks:
+      - kinetiq-backup
+
+volumes:
+  kinetiq_backups:
+
+networks:
+  kinetiq-backup:
+    driver: bridge

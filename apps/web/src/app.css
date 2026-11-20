@@ -1,0 +1,147 @@
+@import "tailwindcss";
+
+@layer base {
+  :root, :root.light {
+    --bg-canvas: #eef1f4;
+    --bg-surface: #ffffff;
+    --bg-surface-elevated: #f5f7f9;
+    --bg-surface-muted: #f5f7f9;
+    --bg-surface-hover: #ebeff3;
+    --border-subtle: rgba(15, 23, 42, 0.08);
+    --border-hover: rgba(15, 23, 42, 0.15);
+    --text-primary: #111827;
+    --text-secondary: #4b5563;
+    --text-muted: #6b7280;
+
+    --primary-emerald: #127852;
+    --primary-emerald-hover: #0e6343;
+    --primary-sage: #94c2af;
+    --primary-tint: #e6f4ee;
+    --primary-indigo: #127852;
+    --primary-indigo-glow: rgba(18, 120, 82, 0.12);
+
+    --brand-primary: #127852;
+    --brand-primary-hover: #0e6343;
+    --brand-soft: #e6f4ee;
+
+    --status-emerald: #127852;
+    --status-amber: #d97706;
+    --status-rose: #e11d48;
+
+    --btn-secondary-bg: #f5f7f9;
+    --btn-secondary-border: rgba(15, 23, 42, 0.08);
+    --btn-secondary-text: #1f2937;
+    --btn-secondary-hover-bg: #e8edf2;
+    --btn-secondary-hover-border: rgba(15, 23, 42, 0.15);
+
+    --input-bg: #f5f7f9;
+    --input-border: rgba(15, 23, 42, 0.09);
+    --input-text: #111827;
+
+    /* Carbon.sh / GitHub Light Syntax Highlighting Tokens */
+    --code-bg: #ffffff;
+    --code-header-bg: #f6f8fa;
+    --code-border: rgba(15, 23, 42, 0.09);
+    --code-lineno: #9ca3af;
+    --code-plain: #24292f;
+    --code-punct: #57606a;
+    --code-keyword: #cf222e;
+    --code-entity: #953800;
+    --code-fn: #8250df;
+    --code-prop: #0550ae;
+    --code-string: #0a3069;
+    --code-accent-str: #116329;
+
+    /* Ultra-soft ambient diffused shadows (No heavy/harsh shadows) */
+    --shadow-bento: 0 2px 10px -2px rgba(15, 23, 42, 0.03), 0 1px 3px -1px rgba(15, 23, 42, 0.02);
+    --shadow-pill: 0 1px 3px rgba(15, 23, 42, 0.03);
+    --shadow-dropdown: 0 10px 24px -4px rgba(15, 23, 42, 0.07);
+  }
+
+  :root.dark {
+    --bg-canvas: #0b110e;
+    --bg-surface: #121a16;
+    --bg-surface-elevated: #18231e;
+    --bg-surface-muted: #18231e;
+    --bg-surface-hover: #1f2d27;
+    --border-subtle: rgba(255, 255, 255, 0.08);
+    --border-hover: rgba(255, 255, 255, 0.15);
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+
+    --primary-emerald: #10b981;
+    --primary-emerald-hover: #059669;
+    --primary-sage: #2d5a47;
+    --primary-tint: rgba(16, 185, 129, 0.14);
+    --primary-indigo: #10b981;
+    --primary-indigo-glow: rgba(16, 185, 129, 0.15);
+
+    --brand-primary: #10b981;
+    --brand-primary-hover: #059669;
+    --brand-soft: rgba(16, 185, 129, 0.14);
+
+    --status-emerald: #10b981;
+    --status-amber: #f59e0b;
+    --status-rose: #ef4444;
+
+    --btn-secondary-bg: #18231e;
+    --btn-secondary-border: rgba(255, 255, 255, 0.08);
+    --btn-secondary-text: #e2e8f0;
+    --btn-secondary-hover-bg: #1f2d27;
+    --btn-secondary-hover-border: rgba(255, 255, 255, 0.15);
+
+    --input-bg: #0e1512;
+    --input-border: rgba(255, 255, 255, 0.09);
+    --input-text: #f8fafc;
+
+    /* Carbon.sh / GitHub Dark Syntax Highlighting Tokens */
+    --code-bg: #0d1411;
+    --code-header-bg: #131d19;
+    --code-border: rgba(255, 255, 255, 0.09);
+    --code-lineno: #475569;
+    --code-plain: #e2e8f0;
+    --code-punct: #94a3b8;
+    --code-keyword: #ff7b72;
+    --code-entity: #ffa657;
+    --code-fn: #d2a8ff;
+    --code-prop: #79c0ff;
+    --code-string: #a5d6ff;
+    --code-accent-str: #7ee787;
+
+    --shadow-bento: 0 2px 10px -2px rgba(0, 0, 0, 0.2);
+    --shadow-pill: 0 1px 2px rgba(0, 0, 0, 0.15);
+    --shadow-dropdown: 0 10px 24px -4px rgba(0, 0, 0, 0.35);
+  }
+
+  body {
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+}
+
+.bento-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 1.5rem;
+  box-shadow: var(--shadow-bento);
+}
+
+.bento-pill {
+  box-shadow: var(--shadow-pill);
+}
+
+.sage-striped-bar {
+  background-color: var(--primary-sage);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.16),
+    rgba(255, 255, 255, 0.16) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+}

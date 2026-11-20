@@ -1,0 +1,302 @@
+basePath: /
+definitions:
+  project.CreateProjectRequest:
+    properties:
+      name:
+        example: My Web App
+        maxLength: 100
+        minLength: 1
+        type: string
+    required:
+    - name
+    type: object
+  project.ProjectResponse:
+    properties:
+      api_key:
+        example: sp_live_abcdef123456_7890abcdef
+        type: string
+      created_at:
+        example: "2026-10-14T12:00:00Z"
+        type: string
+      id:
+        example: a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+        type: string
+      name:
+        example: My Web App
+        type: string
+    type: object
+  response.ErrorBody:
+    properties:
+      code:
+        type: string
+      details:
+        items:
+          $ref: '#/definitions/response.ErrorDetail'
+        type: array
+      message:
+        type: string
+    type: object
+  response.ErrorDetail:
+    properties:
+      field:
+        type: string
+      message:
+        type: string
+    type: object
+  response.Response:
+    properties:
+      data: {}
+      error:
+        $ref: '#/definitions/response.ErrorBody'
+      success:
+        type: boolean
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: High-performance Real-Time Product Analytics API
+  title: Kinetiq Analytics API
+  version: "1.0"
+paths:
+  /api/v1/ingest:
+    post:
+      consumes:
+      - application/json
+      description: Accepts single event or batch, authenticates with project API key,
+        and enqueues to Redis
+      parameters:
+      - description: Project API Key (Bearer sp_live_...)
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/response.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/response.Response'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/response.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Ingest one or a batch of analytics events
+      tags:
+      - ingestion
+  /api/v1/projects:
+    get:
+      description: Returns all projects owned by the currently authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: List projects
+      tags:
+      - projects
+    post:
+      consumes:
+      - application/json
+      description: Creates a new project and returns the initial raw ingestion API
+        key (shown only once)
+      parameters:
+      - description: Project details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/project.CreateProjectRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/project.ProjectResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a new analytics project
+      tags:
+      - projects
+  /api/v1/projects/{projectID}:
+    get:
+      description: Returns project details by ID for the owner (never returns API
+        key hash)
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/response.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: Get project details
+      tags:
+      - projects
+  /api/v1/projects/{projectID}/analytics/funnel:
+    get:
+      description: Multi-step conversion rates and step counts
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      - description: Start timestamp RFC3339
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End timestamp RFC3339
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Comma-separated event names (2-3 steps)
+        in: query
+        name: steps
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses: {}
+      summary: Funnel analytics
+      tags:
+      - analytics
+  /api/v1/projects/{projectID}/analytics/summary:
+    get:
+      description: Total events and unique distinct IDs in date range
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      - description: Start timestamp RFC3339
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End timestamp RFC3339
+        in: query
+        name: to
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses: {}
+      summary: Analytics summary
+      tags:
+      - analytics
+  /api/v1/projects/{projectID}/analytics/top-events:
+    get:
+      description: Top event names by frequency
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      - description: Start timestamp RFC3339
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End timestamp RFC3339
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Max results (1-50)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses: {}
+      summary: Top events
+      tags:
+      - analytics
+  /api/v1/projects/{projectID}/analytics/volume:
+    get:
+      description: Event volume bucketed by hour or day
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      - description: Start timestamp RFC3339
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End timestamp RFC3339
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: 'Bucket interval: hour or day'
+        in: query
+        name: interval
+        type: string
+      produces:
+      - application/json
+      responses: {}
+      summary: Event volume time-series
+      tags:
+      - analytics
+swagger: "2.0"

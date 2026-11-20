@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+.bun/
+
+# Environment files
+.env
+.env.local
+loadtest/.env.loadtest
+
+# Binaries & build artifacts
+bin/
+dist/
+*.exe
+*.test
+apps/api/kinetiq-api
+
+# Logs & OS artifacts
+*.log
+coverage.out
+*.out
+.DS_Store

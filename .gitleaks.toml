@@ -1,0 +1,19 @@
+title = "Kinetiq gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Allow example env files and E2E test compose with dummy values"
+paths = [
+  '''\.env\.example$''',
+  '''docker-compose\.e2e\.yml$''',
+]
+
+[[allowlists]]
+description = "Allow test fixtures and mocks"
+paths = [
+  '''_test\.go$''',
+  '''\.test\.ts$''',
+  '''\.spec\.ts$''',
+]

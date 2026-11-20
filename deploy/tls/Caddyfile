@@ -1,0 +1,5 @@
+{$PUBLIC_URL} {
+  reverse_proxy api:8080
+  encode gzip
+  header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+}

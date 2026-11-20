@@ -1,0 +1,28 @@
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'docs/**'
+          - '.github/pull_request_template.md'
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**'
+          - 'Makefile'
+
+feat:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'apps/**'
+          - 'packages/**'
+          - 'internal/**'
+          - 'cmd/**'
+          - 'migrations/**'
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*_test.go'
+          - '**/*.test.ts'
+          - '**/*.test.js'

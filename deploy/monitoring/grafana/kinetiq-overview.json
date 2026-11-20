@@ -1,0 +1,157 @@
+{
+  "uid": "kinetiq-overview",
+  "title": "Kinetiq Self-Hosted Overview",
+  "tags": ["kinetiq", "self-hosted", "observability"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "15s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Ingestion Throughput (EPS)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(ingest_events_received_total[5m]))",
+          "legendFormat": "Received EPS"
+        },
+        {
+          "expr": "sum(rate(ingest_events_accepted_total[5m]))",
+          "legendFormat": "Accepted EPS"
+        },
+        {
+          "expr": "sum(rate(ingest_requests_rejected_total[5m])) by (reason)",
+          "legendFormat": "Rejected ({{reason}})"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Worker Queue Lag & Persistence",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "expr": "worker_queue_lag",
+          "legendFormat": "Pending Stream Lag"
+        },
+        {
+          "expr": "sum(rate(worker_events_persisted_total[5m]))",
+          "legendFormat": "Persisted EPS"
+        },
+        {
+          "expr": "sum(rate(worker_retries_total[5m]))",
+          "legendFormat": "Retries / sec"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Dead-Letter Queue (DLQ) Growth",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "expr": "increase(worker_dead_letter_total[15m])",
+          "legendFormat": "DLQ Increase (15m)"
+        },
+        {
+          "expr": "worker_dead_letter_total",
+          "legendFormat": "DLQ Total"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "HTTP p95 / p99 Latency (s)",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, route))",
+          "legendFormat": "p95 {{route}}"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, route))",
+          "legendFormat": "p99 {{route}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "gauge",
+      "title": "Analytics Cache Hit Ratio",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(analytics_cache_hits_total[5m])) / clamp_min(sum(rate(analytics_cache_hits_total[5m])) + sum(rate(analytics_cache_misses_total[5m])), 1)",
+          "legendFormat": "Cache Hit Ratio"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "PostgreSQL Connection Pool",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "expr": "db_pool_acquired_conns",
+          "legendFormat": "API Acquired Conns"
+        },
+        {
+          "expr": "db_pool_idle_conns",
+          "legendFormat": "API Idle Conns"
+        },
+        {
+          "expr": "db_pool_max_conns",
+          "legendFormat": "API Max Conns"
+        },
+        {
+          "expr": "sum(pg_stat_database_numbackends)",
+          "legendFormat": "PG Total Backends"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Host Disk Usage & Degradation Mode",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "expr": "max(1 - (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay\"}))",
+          "legendFormat": "Max Disk Used Ratio"
+        },
+        {
+          "expr": "max(kinetiq_degraded_mode)",
+          "legendFormat": "Degraded Mode Active"
+        },
+        {
+          "expr": "pg_up",
+          "legendFormat": "PostgreSQL Up"
+        },
+        {
+          "expr": "redis_up",
+          "legendFormat": "Redis Up"
+        }
+      ]
+    }
+  ]
+}

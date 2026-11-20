@@ -1,0 +1,113 @@
+name: Component Tests
+
+on:
+  push:
+
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  component-test:
+    name: Component & Integration Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kinetiq
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: kinetiq
+        ports:
+          - 5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for Code Changes
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          else
+            CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "apps/api/all")
+          fi
+          
+          CODE_CHANGED=$(echo "$CHANGED" | grep -vE '(\.md$|(^docs/|^apps/docs/)|^\.github/|^\.githooks/|^\.gitignore$|^scripts/)' || true)
+          if [ -z "$CODE_CHANGED" ]; then
+            echo "has_code_changes=false" >> $GITHUB_OUTPUT
+            echo "Only documentation/markdown/ci files modified. Fast-passing."
+          else
+            echo "has_code_changes=true" >> $GITHUB_OUTPUT
+            echo "Code files modified:"
+            echo "$CODE_CHANGED"
+          fi
+
+      - name: Setup Go
+        if: steps.filter.outputs.has_code_changes == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache: true
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Setup Bun
+        if: steps.filter.outputs.has_code_changes == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Dependencies
+        if: steps.filter.outputs.has_code_changes == 'true'
+        run: |
+          cd apps/auth && bun install
+          go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+
+      - name: Run Database Migrations & Rollback Verification
+        if: steps.filter.outputs.has_code_changes == 'true'
+        env:
+          DATABASE_PORT: ${{ job.services.postgres.ports[5432] }}
+        run: |
+          DATABASE_URL="postgres://kinetiq@localhost:${DATABASE_PORT}/kinetiq?sslmode=disable"
+          psql "$DATABASE_URL" -f $GITHUB_WORKSPACE/migrations/auth/0000_red_rumiko_fujikawa.sql
+          export PATH=$PATH:$(go env GOPATH)/bin
+          echo "=== 1. Testing Migrate UP to latest ==="
+          migrate -path "$GITHUB_WORKSPACE/migrations/app" -database "$DATABASE_URL" up
+          echo "=== 2. Testing Migrate DOWN (rollback validation) ==="
+          migrate -path "$GITHUB_WORKSPACE/migrations/app" -database "$DATABASE_URL" down 1 <<< "y"
+          echo "=== 3. Re-applying Migrate UP for test suite ==="
+          migrate -path "$GITHUB_WORKSPACE/migrations/app" -database "$DATABASE_URL" up
+
+      - name: Run Component Tests
+        if: steps.filter.outputs.has_code_changes == 'true'
+        env:
+          DATABASE_PORT: ${{ job.services.postgres.ports[5432] }}
+          REDIS_PORT: ${{ job.services.redis.ports[6379] }}
+          AUTH_INTERNAL_SECRET: test-internal-secret
+        run: |
+          export DATABASE_URL="postgres://kinetiq@localhost:${DATABASE_PORT}/kinetiq?sslmode=disable"
+          export REDIS_URL="redis://localhost:${REDIS_PORT}/0"
+          make test-component

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -e
+
+echo "=== [Git Hook] Running Pre-Push Quality & Coverage Checks ==="
+
+# Check if push contains only docs/markdown files
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+CHANGED_FILES=$(git diff --name-only origin/master...HEAD 2>/dev/null || true)
+CODE_CHANGED=$(echo "$CHANGED_FILES" | grep -vE '(\.md$|(^docs/|^apps/docs/)|^\.github/|^\.githooks/|^\.gitignore$|^scripts/|^docker-compose\.e2e\.yml$)' || true)
+
+if [ -z "$CODE_CHANGED" ]; then
+    echo "ℹ️  Only documentation/markdown files modified on $CURRENT_BRANCH."
+    echo "    Skipping full integration & backend coverage suite (Fast-Push)."
+    echo "=== [Git Hook] Docs Pre-Push Passed. Ready to push! ==="
+    exit 0
+fi
+
+# Fast offline gates (no DB/network needed)
+echo "-> gofmt"
+UNFORMATTED=$(cd apps/api && gofmt -l .)
+if [ -n "$UNFORMATTED" ]; then
+    echo "Unformatted Go files:"; echo "$UNFORMATTED"; exit 1
+fi
+echo "-> go vet"
+(cd apps/api && go vet ./...)
+echo "-> go test (offline unit tests)"
+(cd apps/api && go test -count=1 ./internal/... ./cmd/...)
+echo "-> auth tsc --noEmit"
+(cd apps/auth && bunx tsc --noEmit)
+echo "-> web svelte-check"
+(cd apps/web && bun run check)
+
+# Live-DB integration tests + coverage: opt-in (CI runs them in isolation).
+# Run with: RUN_INTEGRATION=1 git push
+if [ "${RUN_INTEGRATION:-0}" = "1" ]; then
+    make test
+    make test-coverage
+else
+    echo "ℹ️  Skipping integration tests & coverage (set RUN_INTEGRATION=1 to run; needs local Postgres/Redis)."
+fi
+
+echo "=== [Git Hook] Pre-Push Checks Passed. Ready to push! ==="

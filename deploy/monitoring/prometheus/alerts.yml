@@ -1,0 +1,112 @@
+groups:
+  - name: kinetiq-selfhost-ops
+    rules:
+      - alert: KinetiqWorkerHighLag
+        expr: worker_queue_lag > 10000
+        for: 5m
+        labels:
+          severity: warning
+          component: worker
+        annotations:
+          summary: "Kinetiq worker queue lag is high ({{ $value }} pending events)"
+          description: "Redis ingestion stream lag has exceeded 10,000 events for 5 minutes. Check worker replicas and PostgreSQL write latency."
+          runbook: "docs/runbooks/SELF_HOSTED_DR_AND_INCIDENT_RUNBOOK.md#1-high-worker-lag"
+
+      - alert: KinetiqWorkerCriticalLag
+        expr: worker_queue_lag > 50000
+        for: 5m
+        labels:
+          severity: critical
+          component: worker
+        annotations:
+          summary: "Kinetiq worker queue lag is critical ({{ $value }} pending events)"
+          description: "Redis ingestion stream lag exceeded 50,000 events. Scale worker replicas immediately or inspect database lock contention."
+          runbook: "docs/runbooks/SELF_HOSTED_DR_AND_INCIDENT_RUNBOOK.md#1-high-worker-lag"
+
+      - alert: KinetiqDLQGrowth
+        expr: increase(worker_dead_letter_total[15m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: dlq
+        annotations:
+          summary: "Kinetiq DLQ is growing ({{ $value | printf \"%.0f\" }} dead letters in 15m)"
+          description: "Worker failed to persist batches after retries and routed messages to dead_letter_events. Inspect payload schema and DB health."
+          runbook: "docs/runbooks/SELF_HOSTED_DR_AND_INCIDENT_RUNBOOK.md#1-high-worker-lag"
+
+      - alert: KinetiqHostDiskUsageHigh
+        expr: (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          component: host
+        annotations:
+          summary: "Host disk usage above 85% on {{ $labels.mountpoint }}"
+          description: "Available disk space is below 15%. Prune old backups, verify TimescaleDB retention policies, or expand volume."
+          runbook: "docs/runbooks/SELF_HOSTED_DR_AND_INCIDENT_RUNBOOK.md#4-disk-full"
+
+      - alert: KinetiqHostDiskUsageCritical
+        expr: (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})) > 0.92
+        for: 2m
+        labels:
+          severity: critical
+          component: host
+        annotations:
+          summary: "Host disk usage critical (>92%) on {{ $labels.mountpoint }}"
+          description: "Disk exhaustion imminent; PostgreSQL WAL and Redis AOF writes risk failing."
+          runbook: "docs/runbooks/SELF_HOSTED_DR_AND_INCIDENT_RUNBOOK.md#4-disk-full"
+
+      - alert: KinetiqDBConnectionExhaustion
+        expr: (sum(pg_stat_database_numbackends) / max(pg_settings_max_connections)) > 0.85 or (db_pool_acquired_conns / clamp_min(db_pool_max_conns, 1)) > 0.85
+        for: 3m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "PostgreSQL connection pool utilization above 85%"
+          description: "Database connections are approaching max_connections. Check slow queries, PgBouncer pool sizing, or worker concurrency."
+          runbook: "docs/runbooks/SELF_HOSTED_DR_AND_INCIDENT_RUNBOOK.md#2-postgresql--timescaledb-down-or-exhausted"
+
+      - alert: KinetiqDatabaseDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "PostgreSQL / TimescaleDB is unreachable"
+          description: "postgres-exporter reports pg_up == 0 for >1m. Ingestion should buffer in Redis while dashboard operates in degraded mode."
+          runbook: "docs/runbooks/SELF_HOSTED_DR_AND_INCIDENT_RUNBOOK.md#2-postgresql--timescaledb-down-or-exhausted"
+
+      - alert: KinetiqRedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: redis
+        annotations:
+          summary: "Redis stream & cache instance is unreachable"
+          description: "redis-exporter reports redis_up == 0 for >1m. Ingestion queue and analytics cache are impacted."
+          runbook: "docs/runbooks/SELF_HOSTED_DR_AND_INCIDENT_RUNBOOK.md#3-redis-down"
+
+      - alert: KinetiqHighIngestLatencyP99
+        expr: histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{route="/api/v1/ingest"}[5m])) by (le)) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "Ingestion API p99 latency > 500ms ({{ $value | printf \"%.3f\" }}s)"
+          description: "p99 latency on /api/v1/ingest exceeded 500ms for 5 minutes."
+          runbook: "docs/runbooks/SELF_HOSTED_DR_AND_INCIDENT_RUNBOOK.md#1-high-worker-lag"
+
+      - alert: KinetiqDegradedModeActive
+        expr: kinetiq_degraded_mode > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "Kinetiq graceful degradation mode active ({{ $labels.mode }})"
+          description: "Kinetiq entered graceful degradation mode {{ $labels.mode }}."
+          runbook: "docs/runbooks/SELF_HOSTED_DR_AND_INCIDENT_RUNBOOK.md#graceful-degradation-modes"

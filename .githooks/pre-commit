@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -e
+
+echo "=== [Git Hook] Running Pre-Commit Checks ==="
+
+# Check if commit contains only docs/markdown files
+CHANGED_FILES=$(git diff --cached --name-only)
+CODE_CHANGED=$(echo "$CHANGED_FILES" | grep -vE '(\.md$|(^docs/|^apps/docs/)|^\.github/|^\.gitignore$)' || true)
+
+if [ -z "$CODE_CHANGED" ]; then
+    echo "ℹ️  Only documentation files modified. Running docs build check..."
+    if [ -d "apps/docs" ] && echo "$CHANGED_FILES" | grep -q "^apps/docs/"; then
+        (cd apps/docs && bun run build)
+    fi
+    echo "=== [Git Hook] Docs Fast-Check Passed ==="
+    exit 0
+fi
+
+# 1. Run full linters & typecheck for application code
+make lint
+
+# 2. Check for staged secrets or .env files
+if echo "$CHANGED_FILES" | grep -E '(\.env$|\.pem$|\.key$)'; then
+    echo "ERROR: Attempting to commit sensitive environment or key file!"
+    exit 1
+fi
+
+echo "=== [Git Hook] Pre-Commit Passed ==="
+
+# 3. Run gitleaks if available
+if command -v gitleaks >/dev/null 2>&1; then
+    echo "Running gitleaks secret scan..."
+    if [ -f ".gitleaks.toml" ]; then
+        gitleaks protect --staged --config .gitleaks.toml --no-banner --redact
+    else
+        gitleaks protect --staged --no-banner --redact
+    fi
+    echo "gitleaks passed."
+else
+    echo "ℹ️  gitleaks not installed, skipping secret scan (install via https://github.com/gitleaks/gitleaks)"
+fi

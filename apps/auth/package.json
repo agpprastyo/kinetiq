@@ -1,0 +1,23 @@
+{
+  "name": "@kinetiq/auth",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "PORT=3001 bun --watch src/index.ts",
+    "start": "PORT=3001 bun run src/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@better-auth/drizzle-adapter": "^1.7.7",
+    "@hono/swagger-ui": "^0.6.1",
+    "better-auth": "^1.1.21",
+    "drizzle-orm": "^0.45.4",
+    "hono": "^4.6.14",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.31.11"
+  }
+}

@@ -1,0 +1,122 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kinetiq-e2e-postgres
+    restart: "no"
+    environment:
+      POSTGRES_USER: kinetiq
+      POSTGRES_PASSWORD: kinetiq
+      POSTGRES_DB: kinetiq
+    volumes:
+      - ./docker/postgres-init/01-init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
+      - ./migrations/auth:/docker-entrypoint-initdb.d/auth:ro
+      - ./migrations/app:/docker-entrypoint-initdb.d/app:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kinetiq -d kinetiq"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: kinetiq-e2e-redis
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  auth:
+    build:
+      context: ./apps/auth
+      dockerfile: Dockerfile
+    container_name: kinetiq-e2e-auth
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: "3001"
+      DATABASE_URL: "postgres://kinetiq:kinetiq@postgres:5432/kinetiq?sslmode=disable"
+      BETTER_AUTH_SECRET: "e2e-secret-key-must-be-at-least-32-chars-long" # gitleaks:allow
+      BETTER_AUTH_URL: "http://auth:3001"
+      AUTH_INTERNAL_SECRET: "e2e-secret-key-must-be-at-least-32-chars-long" # gitleaks:allow
+      WEB_ORIGIN: "http://localhost:5173"
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3001/healthz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: kinetiq-e2e-api
+    restart: "no"
+    command: ["/app/kinetiq-api"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    environment:
+      APP_ENV: "production"
+      PORT: "8080"
+      DATABASE_URL: "postgres://kinetiq:kinetiq@postgres:5432/kinetiq?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      AUTH_BASE_URL: "http://auth:3001"
+      AUTH_INTERNAL_SECRET: "e2e-secret-key-must-be-at-least-32-chars-long" # gitleaks:allow
+      PUBLIC_APP_URL: "http://localhost:5173"
+      WEB_ORIGIN: "http://localhost:5173"
+    ports:
+      - "18080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/readyz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: kinetiq-e2e-worker
+    restart: "no"
+    command: ["/app/kinetiq-worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_ENV: "production"
+      DATABASE_URL: "postgres://kinetiq:kinetiq@postgres:5432/kinetiq?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: kinetiq-e2e-web
+    restart: "no"
+    depends_on:
+      api:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    environment:
+      PUBLIC_API_URL: "http://localhost:8080/api/v1"
+      PUBLIC_AUTH_URL: "http://localhost:3001"
+    ports:
+      - "5173:5173"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:5173/ || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
