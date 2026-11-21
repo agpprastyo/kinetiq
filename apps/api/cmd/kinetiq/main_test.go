@@ -12,6 +12,37 @@ import (
 	"testing"
 )
 
+func TestVersionArgs(t *testing.T) {
+	for _, arg := range []string{"version", "--version", "-v"} {
+		if !isVersionArg(arg) {
+			t.Errorf("isVersionArg(%q) = false, want true", arg)
+		}
+	}
+	for _, arg := range []string{"backup", "-version", "ver", ""} {
+		if isVersionArg(arg) {
+			t.Errorf("isVersionArg(%q) = true, want false", arg)
+		}
+	}
+}
+
+func TestPrintVersion(t *testing.T) {
+	orig := Version
+	t.Cleanup(func() { Version = orig })
+
+	var buf bytes.Buffer
+	printVersion(&buf)
+	if got := buf.String(); got != "kinetiq dev\n" {
+		t.Errorf("default version output = %q, want %q", got, "kinetiq dev\n")
+	}
+
+	Version = "v1.2.3"
+	buf.Reset()
+	printVersion(&buf)
+	if got := buf.String(); got != "kinetiq v1.2.3\n" {
+		t.Errorf("overridden version output = %q, want %q", got, "kinetiq v1.2.3\n")
+	}
+}
+
 func TestBackup_SHA256MatchesWrittenArchive(t *testing.T) {
 	origDir, err := os.Getwd()
 	if err != nil {
