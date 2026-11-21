@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"time"
@@ -18,10 +19,26 @@ import (
 	"kinetiq/internal/retention"
 )
 
+// Version is overridden at build time: -ldflags "-X main.Version=v1.2.3".
+var Version = "dev"
+
+func isVersionArg(arg string) bool {
+	return arg == "version" || arg == "--version" || arg == "-v"
+}
+
+func printVersion(w io.Writer) {
+	fmt.Fprintf(w, "kinetiq %s\n", Version)
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
+	}
+
+	if isVersionArg(os.Args[1]) {
+		printVersion(os.Stdout)
+		return
 	}
 
 	switch os.Args[1] {
@@ -68,6 +85,7 @@ func printUsage() {
 	fmt.Println("  kinetiq vacuum [--analyze]")
 	fmt.Println("  kinetiq doctor [--json]")
 	fmt.Println("  kinetiq upgrade [--dry-run] [--skip-health]")
+	fmt.Println("  kinetiq version | --version | -v")
 }
 
 func requireDatabaseURL() string {
