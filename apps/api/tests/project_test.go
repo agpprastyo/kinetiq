@@ -10,15 +10,13 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-
-	"kinetiq/internal/app"
 )
 
 func TestProjectSeam(t *testing.T) {
 	os.Setenv("AUTH_INTERNAL_SECRET", "test-internal-secret")
 	os.Setenv("AUTH_BASE_URL", "http://localhost:3001")
 
-	server := app.Setup()
+	server := setupTestServer()
 
 	t.Run("unauthenticated request returns 401", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
@@ -98,13 +96,23 @@ func TestProjectSeam(t *testing.T) {
 
 		var listResp1 struct {
 			Success bool `json:"success"`
-			Data    []struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
+			Data    struct {
+				Items []struct {
+					ID   string `json:"id"`
+					Name string `json:"name"`
+				} `json:"items"`
+				Pagination struct {
+					Page  int   `json:"page"`
+					Limit int   `json:"limit"`
+					Total int64 `json:"total"`
+				} `json:"pagination"`
 			} `json:"data"`
 		}
 		json.NewDecoder(respList1.Body).Decode(&listResp1)
-		user1Projects := listResp1.Data
+		if listResp1.Data.Pagination.Page != 1 || listResp1.Data.Pagination.Limit != 20 || listResp1.Data.Pagination.Total < 1 {
+			t.Errorf("unexpected pagination meta: %+v", listResp1.Data.Pagination)
+		}
+		user1Projects := listResp1.Data.Items
 		found := false
 		for _, p := range user1Projects {
 			if p.ID == createdProject.ID {
@@ -140,12 +148,14 @@ func TestProjectSeam(t *testing.T) {
 		reqList2.Header.Set("Cookie", user2Cookie)
 		respList2, _ := server.Test(reqList2)
 		var listResp2 struct {
-			Data []struct {
-				ID string `json:"id"`
+			Data struct {
+				Items []struct {
+					ID string `json:"id"`
+				} `json:"items"`
 			} `json:"data"`
 		}
 		json.NewDecoder(respList2.Body).Decode(&listResp2)
-		for _, p := range listResp2.Data {
+		for _, p := range listResp2.Data.Items {
 			if p.ID == createdProject.ID {
 				t.Errorf("leak! User 2 should not see User 1's project")
 			}
@@ -211,6 +221,20 @@ func TestProjectSeam(t *testing.T) {
 		listKeysResp, _ := server.Test(listKeysReq)
 		if listKeysResp.StatusCode != http.StatusOK {
 			t.Errorf("expected 200 OK listing API keys, got %d", listKeysResp.StatusCode)
+		}
+		var keysBody struct {
+			Data struct {
+				Items []struct {
+					ID string `json:"id"`
+				} `json:"items"`
+				Pagination struct {
+					Total int64 `json:"total"`
+				} `json:"pagination"`
+			} `json:"data"`
+		}
+		_ = json.NewDecoder(listKeysResp.Body).Decode(&keysBody)
+		if len(keysBody.Data.Items) < 2 || keysBody.Data.Pagination.Total < 2 {
+			t.Errorf("expected >=2 keys in paginated envelope, got %+v", keysBody.Data)
 		}
 
 		// 9. Revoke the newly created key
@@ -413,6 +437,51 @@ func TestProjectSeam(t *testing.T) {
 		}
 		if listResp.StatusCode != http.StatusOK {
 			t.Fatalf("expected 200 OK from list alert rules, got %d", listResp.StatusCode)
+		}
+		var rulesBody struct {
+			Data struct {
+				Items []struct {
+					ID string `json:"id"`
+				} `json:"items"`
+				Pagination struct {
+					Total      int64 `json:"total"`
+					TotalPages int   `json:"total_pages"`
+				} `json:"pagination"`
+			} `json:"data"`
+		}
+		_ = json.NewDecoder(listResp.Body).Decode(&rulesBody)
+		if len(rulesBody.Data.Items) != 1 || rulesBody.Data.Pagination.Total != 1 || rulesBody.Data.Pagination.TotalPages != 1 {
+			t.Errorf("expected 1 rule in paginated envelope, got %+v", rulesBody.Data)
+		}
+
+		// 3b. SSRF: metadata / internal webhook targets rejected on create and update
+		for _, bad := range []string{"http://169.254.169.254/latest/meta-data/", "http://127.0.0.1:6379/"} {
+			badPayload, _ := json.Marshal(map[string]interface{}{
+				"name": "ssrf", "event_name": "x", "condition": "spike_gt", "threshold_count": 1,
+				"channel_type": "webhook", "webhook_url": bad,
+			})
+			badReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/alerts", bytes.NewReader(badPayload))
+			badReq.Header.Set("Content-Type", "application/json")
+			badReq.Header.Set("Cookie", userCookie)
+			badResp, err := server.Test(badReq)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if badResp.StatusCode != http.StatusBadRequest {
+				t.Errorf("create with %s: expected 400, got %d", bad, badResp.StatusCode)
+			}
+
+			upPayload, _ := json.Marshal(map[string]interface{}{"webhook_url": bad})
+			upReq := httptest.NewRequest(http.MethodPut, "/api/v1/projects/"+projectID+"/alerts/"+ruleID, bytes.NewReader(upPayload))
+			upReq.Header.Set("Content-Type", "application/json")
+			upReq.Header.Set("Cookie", userCookie)
+			upResp, err := server.Test(upReq)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if upResp.StatusCode != http.StatusBadRequest {
+				t.Errorf("update with %s: expected 400, got %d", bad, upResp.StatusCode)
+			}
 		}
 
 		// 4. Update alert rule

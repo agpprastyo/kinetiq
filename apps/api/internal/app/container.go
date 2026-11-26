@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,7 +26,9 @@ import (
 	"kinetiq/internal/live"
 	"kinetiq/internal/mailer"
 	"kinetiq/internal/observability"
+	"kinetiq/internal/person"
 	"kinetiq/internal/project"
+	"kinetiq/internal/ratelimit"
 	"kinetiq/internal/retention"
 	"kinetiq/internal/validator"
 )
@@ -43,6 +47,7 @@ type Container struct {
 	ProjectHandler      *project.Handler
 	IngestionService    ingestion.Service
 	IngestionHandler    *ingestion.Handler
+	PersonHandler       *person.Handler
 	AnalyticsService    analytics.Service
 	AnalyticsHandler    *analytics.Handler
 	LiveHandler         *live.Handler
@@ -65,6 +70,11 @@ type Container struct {
 	RetentionService    retention.Service
 	RetentionHandler    *retention.Handler
 	TracerShutdown      func(context.Context) error
+
+	draining   atomic.Bool
+	streamOnce sync.Once
+	streamCtx  context.Context
+	stopStream context.CancelFunc
 }
 
 func NewContainer(ctx context.Context) (*Container, error) {
@@ -81,19 +91,30 @@ func NewContainer(ctx context.Context) (*Container, error) {
 		return nil, err
 	}
 
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	poolCfg, err := database.PoolConfig(cfg.DatabaseURL, cfg.DBMaxOpenConns, 0)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, err
 	}
 
-	// Optional read replica pool
+	// Reader pool (replica, or a second pool on the primary) carries statement_timeout so
+	// analytics/export queries are bounded server-side; writer pool stays unrestricted.
+	readerURL := cfg.DatabaseReadReplicaURL
+	if readerURL == "" {
+		readerURL = cfg.DatabaseURL
+	}
 	var readerPool *pgxpool.Pool
-	if cfg.DatabaseReadReplicaURL != "" {
-		readerPool, err = pgxpool.New(ctx, cfg.DatabaseReadReplicaURL)
-		if err != nil {
-			logger.Warn("failed to create read replica pool, falling back to primary", slog.String("error", err.Error()))
-			readerPool = nil
-		}
+	if readerCfg, rerr := database.PoolConfig(readerURL, cfg.DBMaxOpenConns, cfg.DBStatementTimeout); rerr == nil {
+		readerPool, err = pgxpool.NewWithConfig(ctx, readerCfg)
+	} else {
+		err = rerr
+	}
+	if err != nil {
+		logger.Warn("failed to create reader pool, falling back to primary", slog.String("error", err.Error()))
+		readerPool = nil
 	}
 
 	dbRouter := database.NewRouter(pool, readerPool, logger)
@@ -125,12 +146,18 @@ func NewContainer(ctx context.Context) (*Container, error) {
 	intelligenceHandler := intelligence.NewHandler(intelligenceService, projectService, logger)
 
 	ingestionService := ingestion.NewIngestionService(rdb, logger)
-	ingestionHandler := ingestion.NewHandler(ingestionService, keyValidator, v, logger, cfg.IngestionMaxBatchSize)
+	ingestionHandler := ingestion.NewHandler(ingestionService, keyValidator, v, logger, cfg.IngestionMaxBatchSize, cfg.IngestionMaxPropertyBytes)
+
+	personHandler := person.NewHandler(person.NewService(dbRouter.Writer()), keyValidator)
+
+	limiter := ratelimit.New(rdb, ratelimit.ProjectLimitLookup(dbRouter.Writer(), rdb))
+	ingestionHandler.SetLimiter(limiter)
+	personHandler.SetLimiter(limiter)
 
 	baseAnalyticsService := analytics.NewAnalyticsService(dbRouter.Reader(), queries, logger)
 	cachedAnalyticsService := analytics.NewCachedAnalyticsService(baseAnalyticsService, rdb, logger)
 	analyticsHandler := analytics.NewHandler(cachedAnalyticsService, projectService, logger)
-	liveHandler := live.NewHandler(rdb, logger)
+	liveHandler := live.NewHandler(rdb, projectService, logger)
 	exportHandler := export.NewHandler(dbRouter.Reader(), projectService, logger)
 
 	dlqService := dlq.NewService(dbRouter.Writer(), rdb, logger)
@@ -155,7 +182,7 @@ func NewContainer(ctx context.Context) (*Container, error) {
 	retentionService := retention.NewRetentionService(dbRouter.Writer(), logger)
 	retentionHandler := retention.NewHandler(retentionService, projectAccess, logger)
 
-	return &Container{
+	c := &Container{
 		TracerShutdown:      tracerShutdown,
 		Config:              cfg,
 		Logger:              logger,
@@ -170,6 +197,7 @@ func NewContainer(ctx context.Context) (*Container, error) {
 		ProjectHandler:      projectHandler,
 		IngestionService:    ingestionService,
 		IngestionHandler:    ingestionHandler,
+		PersonHandler:       personHandler,
 		AnalyticsService:    cachedAnalyticsService,
 		AnalyticsHandler:    analyticsHandler,
 		LiveHandler:         liveHandler,
@@ -191,5 +219,25 @@ func NewContainer(ctx context.Context) (*Container, error) {
 		AuditHandler:        auditHandler,
 		RetentionService:    retentionService,
 		RetentionHandler:    retentionHandler,
-	}, nil
+	}
+	liveHandler.SetShutdown(c.StreamContext().Done())
+	return c, nil
+}
+
+// BeginDrain makes /readyz answer 503 so the load balancer stops routing here.
+func (c *Container) BeginDrain() { c.draining.Store(true) }
+
+// Draining reports whether shutdown has started.
+func (c *Container) Draining() bool { return c.draining.Load() }
+
+// StreamContext is cancelled by StopStreams; long-lived responses (SSE) watch it.
+func (c *Container) StreamContext() context.Context {
+	c.streamOnce.Do(func() { c.streamCtx, c.stopStream = context.WithCancel(context.Background()) })
+	return c.streamCtx
+}
+
+// StopStreams ends open SSE streams so server shutdown is not held by them.
+func (c *Container) StopStreams() {
+	c.StreamContext()
+	c.stopStream()
 }

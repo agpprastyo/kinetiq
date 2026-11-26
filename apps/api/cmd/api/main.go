@@ -16,35 +16,34 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to initialize dependencies container: %v", err)
 	}
-	defer container.DBPool.Close()
+	defer container.DBRouter.Close()
 	defer container.RedisClient.Close()
 
 	port := container.Config.Port
 	fiberApp := app.SetupWithContainer(container)
 
-	// Graceful shutdown channel
-	shutdown := make(chan os.Signal, 1)
-	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	go func() {
-		log.Printf("Kinetiq API listening on port %s", port)
-		if err := fiberApp.Listen(":" + port); err != nil {
-			log.Printf("Server shut down error: %v", err)
-		}
-	}()
-
-	<-shutdown
-	log.Println("Shutting down API server gracefully...")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := fiberApp.ShutdownWithContext(ctx); err != nil {
-		log.Printf("Error during server shutdown: %v", err)
+	log.Printf("Kinetiq API listening on port %s", port)
+	serveErr := app.Serve(ctx, fiberApp, ":"+port, container, app.ServeOptions{
+		DrainDelay: container.Config.ShutdownDrainDelay,
+		Timeout:    container.Config.ShutdownTimeout,
+	})
+	if serveErr != nil {
+		log.Printf("Server error: %v", serveErr)
 	}
-	if err := container.TracerShutdown(ctx); err != nil {
+
+	tctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	if err := container.TracerShutdown(tctx); err != nil {
 		log.Printf("Error during tracer shutdown: %v", err)
 	}
+	cancel()
+	container.DBPool.Close()
+	container.RedisClient.Close()
 
+	if serveErr != nil {
+		os.Exit(1)
+	}
 	log.Println("Server gracefully stopped.")
 }

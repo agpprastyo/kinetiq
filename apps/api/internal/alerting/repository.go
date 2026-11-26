@@ -152,7 +152,7 @@ func (r *SQLRepository) ListRules(ctx context.Context, projectID uuid.UUID) ([]A
 		       last_triggered_at, snoozed_until, status, created_at, updated_at
 		FROM alert_rules
 		WHERE project_id = $1
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, id DESC
 	`, projectID)
 	if err != nil {
 		return nil, err

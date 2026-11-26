@@ -28,7 +28,7 @@ func TestCSVExportStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create container: %v", err)
 	}
-	server := app.SetupWithContainer(container)
+	server := app.SetupWithContainer(withFakeAuth(container))
 	queries := db.New(container.DBPool)
 
 	projectID := uuid.New()
@@ -137,6 +137,25 @@ func TestCSVExportStream(t *testing.T) {
 	}
 	if !strings.Contains(string(bodyPut), "********") {
 		t.Errorf("expected masked secret in response, got %s", string(bodyPut))
+	}
+
+	// SSRF: custom endpoint_url pointing at metadata/internal hosts is rejected on save and test
+	for _, path := range []string{"/storage-sync", "/storage-sync/test"} {
+		method := http.MethodPut
+		if strings.HasSuffix(path, "/test") {
+			method = http.MethodPost
+		}
+		ssrfPayload := `{"provider":"minio","bucket_name":"b","endpoint_url":"http://169.254.169.254/","access_key_id":"a","secret_access_key":"s"}`
+		reqSSRF := httptest.NewRequest(method, fmt.Sprintf("/api/v1/projects/%s%s", projectID.String(), path), strings.NewReader(ssrfPayload))
+		reqSSRF.Header.Set("Cookie", "user1_session_cookie")
+		reqSSRF.Header.Set("Content-Type", "application/json")
+		respSSRF, err := server.Test(reqSSRF)
+		if err != nil {
+			t.Fatalf("ssrf request failed: %v", err)
+		}
+		if respSSRF.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s %s: expected 400 for metadata endpoint_url, got %d", method, path, respSSRF.StatusCode)
+		}
 	}
 
 	// Test POST /storage-sync/test with invalid missing credentials

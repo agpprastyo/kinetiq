@@ -8,27 +8,45 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/valyala/fasthttp"
+
+	"kinetiq/internal/project"
+	"kinetiq/internal/response"
 )
 
 type Handler struct {
-	rdb    *redis.Client
-	logger *slog.Logger
+	rdb            *redis.Client
+	projectService project.Service
+	logger         *slog.Logger
+	shutdown       <-chan struct{}
 }
 
-func NewHandler(rdb *redis.Client, logger *slog.Logger) *Handler {
+// SetShutdown makes open SSE streams close when done is closed (server shutdown).
+func (h *Handler) SetShutdown(done <-chan struct{}) { h.shutdown = done }
+
+func NewHandler(rdb *redis.Client, projectService project.Service, logger *slog.Logger) *Handler {
 	return &Handler{
-		rdb:    rdb,
-		logger: logger,
+		rdb:            rdb,
+		projectService: projectService,
+		logger:         logger,
 	}
 }
 
 func (h *Handler) StreamLiveEvents(c *fiber.Ctx) error {
-	projectID := c.Params("projectID")
-	if projectID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "projectID is required"})
+	userID, ok := c.Locals("userID").(string)
+	if !ok || userID == "" {
+		return response.Error(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Unauthorized")
 	}
+	pid, err := uuid.Parse(c.Params("projectID"))
+	if err != nil {
+		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Project not found")
+	}
+	if proj, err := h.projectService.Get(c.UserContext(), userID, pid); err != nil || proj == nil {
+		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Project not found")
+	}
+	projectID := pid.String()
 
 	c.Set("Content-Type", "text/event-stream")
 	c.Set("Cache-Control", "no-cache")
@@ -65,6 +83,8 @@ func (h *Handler) StreamLiveEvents(c *fiber.Ctx) error {
 		for {
 			select {
 			case <-userCtx.Done():
+				return
+			case <-h.shutdown:
 				return
 			case msg, ok := <-ch:
 				if !ok {

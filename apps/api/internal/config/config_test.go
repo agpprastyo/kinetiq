@@ -31,3 +31,17 @@ func TestConfig_Load(t *testing.T) {
 		t.Errorf("expected default log_level, got empty")
 	}
 }
+
+func TestConfig_HardeningDefaults(t *testing.T) {
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DBStatementTimeout <= 0 || cfg.AnalyticsQueryTimeout <= 0 ||
+		cfg.HTTPReadTimeout <= 0 || cfg.HTTPWriteTimeout <= 0 || cfg.HTTPIdleTimeout <= 0 {
+		t.Errorf("timeout defaults must be positive: %+v", cfg)
+	}
+	if cfg.DBStatementTimeout >= cfg.AnalyticsQueryTimeout {
+		t.Errorf("statement_timeout should fire before handler deadline")
+	}
+}

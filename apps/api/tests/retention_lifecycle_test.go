@@ -31,7 +31,7 @@ func TestDataLifecycle_Retention_GDPR_Importer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create container: %v", err)
 	}
-	server := app.SetupWithContainer(container)
+	server := app.SetupWithContainer(withFakeAuth(container))
 	queries := db.New(container.DBPool)
 
 	// Setup a test user and project
@@ -99,15 +99,15 @@ func TestDataLifecycle_Retention_GDPR_Importer(t *testing.T) {
 		// Invalid project ID & invalid body validation
 		badGetReq := httptest.NewRequest(http.MethodGet, "/api/v1/projects/not-a-uuid/retention", nil)
 		badGetReq.Header.Set("Cookie", "user1_session_cookie")
-		if resp, err := server.Test(badGetReq); err != nil || resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("expected 400 for invalid project ID on GET, got status=%v err=%v", resp, err)
+		if resp, err := server.Test(badGetReq); err != nil || resp.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404 for invalid project ID on GET, got status=%v err=%v", resp, err)
 		}
 
 		badPutIDReq := httptest.NewRequest(http.MethodPut, "/api/v1/projects/not-a-uuid/retention", bytes.NewReader(putBody))
 		badPutIDReq.Header.Set("Content-Type", "application/json")
 		badPutIDReq.Header.Set("Cookie", "user1_session_cookie")
-		if resp, err := server.Test(badPutIDReq); err != nil || resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("expected 400 for invalid project ID on PUT, got status=%v err=%v", resp, err)
+		if resp, err := server.Test(badPutIDReq); err != nil || resp.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404 for invalid project ID on PUT, got status=%v err=%v", resp, err)
 		}
 
 		badPutBodyReq := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/projects/%s/retention", projectID), strings.NewReader("{bad-json"))
@@ -210,13 +210,13 @@ func TestDataLifecycle_Retention_GDPR_Importer(t *testing.T) {
 		// Invalid project IDs and unlimited retention branch (-5 normalizes to 0)
 		badPrevReq := httptest.NewRequest(http.MethodGet, "/api/v1/projects/bad-uuid/retention/preview", nil)
 		badPrevReq.Header.Set("Cookie", "user1_session_cookie")
-		if resp, err := server.Test(badPrevReq); err != nil || resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("expected 400 for invalid project ID on preview, got status=%v err=%v", resp, err)
+		if resp, err := server.Test(badPrevReq); err != nil || resp.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404 for invalid project ID on preview, got status=%v err=%v", resp, err)
 		}
 		badRunReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects/bad-uuid/retention/run", nil)
 		badRunReq.Header.Set("Cookie", "user1_session_cookie")
-		if resp, err := server.Test(badRunReq); err != nil || resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("expected 400 for invalid project ID on run, got status=%v err=%v", resp, err)
+		if resp, err := server.Test(badRunReq); err != nil || resp.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404 for invalid project ID on run, got status=%v err=%v", resp, err)
 		}
 
 		missingID := uuid.New()
@@ -296,8 +296,8 @@ func TestDataLifecycle_Retention_GDPR_Importer(t *testing.T) {
 		// Validation & RBAC error paths for GDPR endpoint
 		badProjReq := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/not-a-uuid/compliance/users/u1", nil)
 		badProjReq.Header.Set("Cookie", "user1_session_cookie")
-		if resp, err := server.Test(badProjReq); err != nil || resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("expected 400 for invalid project ID, got status=%v err=%v", resp, err)
+		if resp, err := server.Test(badProjReq); err != nil || resp.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404 for invalid project ID, got status=%v err=%v", resp, err)
 		}
 
 		forbiddenReq := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/projects/%s/compliance/users/u1", projectID), nil)
@@ -438,7 +438,7 @@ func TestRetentionCompliance_CrossTenantIDOR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create container: %v", err)
 	}
-	server := app.SetupWithContainer(container)
+	server := app.SetupWithContainer(withFakeAuth(container))
 	queries := db.New(container.DBPool)
 
 	// Tenant B (user-2-id) owns the victim project; Tenant A (user-1-id, role "owner") is the attacker.

@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
-	"kinetiq/internal/app"
 	"kinetiq/internal/config"
 	"kinetiq/internal/dlq"
 )
@@ -23,7 +22,7 @@ func TestDLQEndpointsAndReplay(t *testing.T) {
 	os.Setenv("AUTH_INTERNAL_SECRET", "test-internal-secret")
 	os.Setenv("AUTH_BASE_URL", "http://localhost:3001")
 
-	server := app.Setup()
+	server := setupTestServer()
 	userCookie := "admin_session_cookie"
 
 	// 1. Create a test project
@@ -80,7 +79,7 @@ func TestDLQEndpointsAndReplay(t *testing.T) {
 	}
 
 	t.Run("GET /api/v1/ops/dlq returns list and summary", func(t *testing.T) {
-		listReq := httptest.NewRequest(http.MethodGet, "/api/v1/ops/dlq?limit=10&offset=0", nil)
+		listReq := httptest.NewRequest(http.MethodGet, "/api/v1/ops/dlq?limit=10", nil)
 		listReq.Header.Set("Cookie", userCookie)
 
 		listResp, err := server.Test(listReq)
@@ -93,8 +92,12 @@ func TestDLQEndpointsAndReplay(t *testing.T) {
 
 		var result struct {
 			Data struct {
-				Items   []dlq.DeadLetterItem `json:"items"`
-				Summary dlq.DLQSummary       `json:"summary"`
+				Items      []dlq.DeadLetterItem `json:"items"`
+				Summary    dlq.DLQSummary       `json:"summary"`
+				Pagination struct {
+					Limit   int  `json:"limit"`
+					HasMore bool `json:"has_more"`
+				} `json:"pagination"`
 			} `json:"data"`
 		}
 		if err := json.NewDecoder(listResp.Body).Decode(&result); err != nil {

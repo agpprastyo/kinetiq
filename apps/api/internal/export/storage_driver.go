@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+
+	"kinetiq/internal/webhook"
 )
 
 type StorageConfig struct {
@@ -59,6 +62,7 @@ func (d *S3StorageDriver) getClient(ctx context.Context, cfg StorageConfig) (S3A
 
 	optFns := []func(*awsConfig.LoadOptions) error{
 		awsConfig.WithRegion(region),
+		awsConfig.WithHTTPClient(webhook.NewSafeHTTPClient(2 * time.Minute)),
 		awsConfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			cfg.AccessKeyID,
 			cfg.SecretAccessKey,

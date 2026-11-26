@@ -57,8 +57,8 @@ func (s *intelligenceService) GenerateProjectWeeklyDigest(ctx context.Context, p
 
 	// 1. Total events and unique users
 	err = s.pool.QueryRow(ctx, `
-		SELECT COUNT(*), COALESCE(COUNT(DISTINCT distinct_id), 0)
-		FROM events
+		SELECT COUNT(*), COALESCE(COUNT(DISTINCT person_key), 0)
+		FROM resolved_events
 		WHERE project_id = $1 AND occurred_at >= $2 AND occurred_at <= $3
 	`, projectID, sevenDaysAgo, now).Scan(&report.TotalEvents, &report.UniqueUsers)
 	if err != nil {

@@ -6,7 +6,7 @@
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
   "scripts": {
-    "test": "vitest run",
+    "test": "bun test",
     "build": "bun build ./src/index.ts --outdir ./dist"
   },
   "devDependencies": {

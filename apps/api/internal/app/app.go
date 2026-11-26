@@ -2,16 +2,110 @@ package app
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/swagger"
+	"github.com/valyala/fasthttp"
 
 	_ "kinetiq/docs/swagger"
+	"kinetiq/internal/analytics"
 	"kinetiq/internal/auth"
+	"kinetiq/internal/config"
 	"kinetiq/internal/observability"
+	"kinetiq/internal/response"
 )
+
+const corsHeaders = "Origin, Content-Type, Accept, Authorization, Cookie, X-Request-ID, traceparent"
+
+// publicIngestPaths are authenticated by project API key (Bearer), never by cookie,
+// so they accept any origin without credentials (browser SDK on customer sites).
+// Decision: per-project allowed_origins is advisory metadata, not enforced here,
+// because an Origin header is trivially forged by non-browser clients.
+var publicIngestPaths = map[string]bool{
+	"/api/v1/ingest":   true,
+	"/api/v1/identify": true,
+	"/api/v1/alias":    true,
+}
+
+// newFiberConfig derives client IP strictly from the configured trusted proxies:
+// c.IP() ignores forwarded headers unless the socket peer is in TRUSTED_PROXIES.
+func newFiberConfig(cfg *config.Config) fiber.Config {
+	fc := fiber.Config{}
+	if cfg == nil {
+		return fc
+	}
+	fc.EnableTrustedProxyCheck = true
+	fc.TrustedProxies = cfg.TrustedProxies
+	fc.ProxyHeader = cfg.ProxyHeader
+	fc.EnableIPValidation = true
+	return fc
+}
+
+// registerCORS: public ingestion = any origin, no credentials; everything else =
+// credentialed CORS restricted to WEB_ORIGIN.
+func registerCORS(app *fiber.App, cfg *config.Config) {
+	origins := []string{"http://localhost:5173", "http://127.0.0.1:5173"}
+	if cfg != nil {
+		origins = cfg.AllowedWebOrigins()
+	}
+	app.Use(cors.New(cors.Config{
+		Next:         func(c *fiber.Ctx) bool { return !publicIngestPaths[c.Path()] },
+		AllowOrigins: "*",
+		AllowHeaders: corsHeaders,
+		AllowMethods: "POST, OPTIONS",
+	}))
+	dashboard := cors.Config{
+		Next:             func(c *fiber.Ctx) bool { return publicIngestPaths[c.Path()] },
+		AllowHeaders:     corsHeaders,
+		AllowCredentials: true,
+		AllowMethods:     "GET, POST, HEAD, PUT, DELETE, PATCH, OPTIONS",
+	}
+	if len(origins) > 0 {
+		dashboard.AllowOrigins = strings.Join(origins, ",")
+	} else {
+		dashboard.AllowOriginsFunc = func(string) bool { return false }
+	}
+	app.Use(cors.New(dashboard))
+}
+
+var errCodes = map[int]string{
+	fiber.StatusNotFound:              "NOT_FOUND",
+	fiber.StatusMethodNotAllowed:      "METHOD_NOT_ALLOWED",
+	fiber.StatusRequestEntityTooLarge: "PAYLOAD_TOO_LARGE",
+	fiber.StatusRequestTimeout:        "REQUEST_TIMEOUT",
+}
+
+// errorHandler renders every framework/unhandled error in the standard envelope.
+func errorHandler(ctx *fiber.Ctx, err error) error {
+	var fe *fiber.Error
+	if !errors.As(err, &fe) {
+		return response.Error(ctx, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error")
+	}
+	if fe.Code >= fiber.StatusInternalServerError {
+		return response.Error(ctx, fe.Code, "INTERNAL_ERROR", "Internal server error")
+	}
+	code, ok := errCodes[fe.Code]
+	if !ok {
+		code = "BAD_REQUEST"
+	}
+	return response.Error(ctx, fe.Code, code, fe.Message)
+}
+
+// sseWriteTimeout lifts the server write deadline for long-lived SSE streams.
+const sseWriteTimeout = 24 * time.Hour
+
+func headerReceived(h *fasthttp.RequestHeader) fasthttp.RequestConfig {
+	uri := string(h.RequestURI())
+	if strings.HasSuffix(uri, "/live") || strings.Contains(uri, "/live?") {
+		return fasthttp.RequestConfig{WriteTimeout: sseWriteTimeout}
+	}
+	return fasthttp.RequestConfig{}
+}
 
 // @title Kinetiq Analytics API
 // @version 1.0
@@ -20,15 +114,18 @@ import (
 // @BasePath /
 func SetupWithContainer(c *Container) *fiber.App {
 	observability.InitLogger()
-	app := fiber.New()
-
-	// CORS configuration for web dashboard
-	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "http://localhost:5173, http://127.0.0.1:5173",
-		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, Cookie, X-Request-ID, traceparent",
-		AllowCredentials: true,
-		AllowMethods:     "GET, POST, HEAD, PUT, DELETE, PATCH, OPTIONS",
-	}))
+	fc := newFiberConfig(c.Config)
+	fc.ErrorHandler = errorHandler
+	if c.Config != nil {
+		fc.BodyLimit = int(c.Config.IngestionMaxBodyBytes)
+		fc.ReadTimeout = c.Config.HTTPReadTimeout
+		fc.WriteTimeout = c.Config.HTTPWriteTimeout
+		fc.IdleTimeout = c.Config.HTTPIdleTimeout
+	}
+	app := fiber.New(fc)
+	app.Server().HeaderReceived = headerReceived
+	app.Use(recover.New())
+	registerCORS(app, c.Config)
 
 	// Global tracing middleware (Request ID & W3C traceparent)
 	app.Use(observability.TraceMiddleware())
@@ -43,34 +140,7 @@ func SetupWithContainer(c *Container) *fiber.App {
 		})
 	})
 
-	app.Get("/readyz", func(ctx *fiber.Ctx) error {
-		cctx, cancel := context.WithTimeout(ctx.UserContext(), 2*time.Second)
-		defer cancel()
-
-		// 1. Check PostgreSQL connection
-		if err := c.DBPool.Ping(cctx); err != nil {
-			return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-				"status": "unavailable",
-				"error":  "database unavailable: " + err.Error(),
-			})
-		}
-
-		// 2. Check Redis connection
-		if err := c.RedisClient.Ping(cctx).Err(); err != nil {
-			return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-				"status": "unavailable",
-				"error":  "redis unavailable: " + err.Error(),
-			})
-		}
-
-		return ctx.Status(fiber.StatusOK).JSON(fiber.Map{
-			"status": "ready",
-			"services": fiber.Map{
-				"postgres": "connected",
-				"redis":    "connected",
-			},
-		})
-	})
+	registerReadiness(app, c)
 
 	token := ""
 	if c.Config != nil {
@@ -79,26 +149,10 @@ func SetupWithContainer(c *Container) *fiber.App {
 	app.Get("/metrics", observability.MetricsHandler(token))
 
 	api := app.Group("/api/v1")
-	api.Get("/health", func(ctx *fiber.Ctx) error {
-		return ctx.JSON(fiber.Map{"status": "ok"})
-	})
-	api.Get("/healthz", func(ctx *fiber.Ctx) error {
-		return ctx.JSON(fiber.Map{"status": "alive"})
-	})
-	api.Get("/readyz", func(ctx *fiber.Ctx) error {
-		cctx, cancel := context.WithTimeout(ctx.UserContext(), 2*time.Second)
-		defer cancel()
-		if err := c.DBPool.Ping(cctx); err != nil {
-			return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "unavailable", "error": err.Error()})
-		}
-		if err := c.RedisClient.Ping(cctx).Err(); err != nil {
-			return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "unavailable", "error": err.Error()})
-		}
-		return ctx.JSON(fiber.Map{"status": "ready"})
-	})
-
 	// Public ingestion endpoint authenticated by Project API Key
 	api.Post("/ingest", c.IngestionHandler.IngestEvents)
+	api.Post("/identify", c.PersonHandler.Identify)
+	api.Post("/alias", c.PersonHandler.Alias)
 
 	// Protected browser session endpoints
 	protected := api.Group("", auth.SessionMiddleware(c.AuthClient))
@@ -113,17 +167,26 @@ func SetupWithContainer(c *Container) *fiber.App {
 	protected.Post("/projects/:projectID/keys", c.ProjectHandler.CreateAPIKey)
 	protected.Delete("/projects/:projectID/keys/:keyID", c.ProjectHandler.RevokeAPIKey)
 
-	// Analytics query endpoints
-	protected.Get("/projects/:projectID/analytics/summary", c.AnalyticsHandler.GetSummary)
-	protected.Get("/projects/:projectID/analytics/top-events", c.AnalyticsHandler.GetTopEvents)
-	protected.Get("/projects/:projectID/analytics/volume", c.AnalyticsHandler.GetVolume)
-	protected.Get("/projects/:projectID/analytics/funnel", c.AnalyticsHandler.GetFunnel)
-	protected.Get("/projects/:projectID/analytics/breakdown", c.AnalyticsHandler.GetPropertyBreakdown)
-	protected.Get("/projects/:projectID/analytics/breakdown/devices", c.AnalyticsHandler.GetDeviceBreakdown)
-	protected.Get("/projects/:projectID/analytics/breakdown/geo", c.AnalyticsHandler.GetGeoBreakdown)
-	protected.Get("/projects/:projectID/analytics/retention", c.AnalyticsHandler.GetRetention)
-	protected.Get("/projects/:projectID/analytics/users", c.AnalyticsHandler.ListUsers)
-	protected.Get("/projects/:projectID/analytics/users/:distinctId/timeline", c.AnalyticsHandler.GetUserTimeline)
+	// Analytics query endpoints (bounded by a per-request deadline -> 504 QUERY_TIMEOUT)
+	qt := analytics.QueryTimeout(20 * time.Second)
+	if c.Config != nil && c.Config.AnalyticsQueryTimeout > 0 {
+		qt = analytics.QueryTimeout(c.Config.AnalyticsQueryTimeout)
+	}
+	protected.Get("/projects/:projectID/analytics/summary", qt, c.AnalyticsHandler.GetSummary)
+	protected.Get("/projects/:projectID/analytics/top-events", qt, c.AnalyticsHandler.GetTopEvents)
+	protected.Get("/projects/:projectID/analytics/volume", qt, c.AnalyticsHandler.GetVolume)
+	protected.Get("/projects/:projectID/analytics/funnel", qt, c.AnalyticsHandler.GetFunnel)
+	protected.Get("/projects/:projectID/analytics/funnel/dropoff", qt, c.AnalyticsHandler.GetFunnelDropoff)
+	protected.Get("/projects/:projectID/analytics/breakdown", qt, c.AnalyticsHandler.GetPropertyBreakdown)
+	protected.Get("/projects/:projectID/analytics/breakdown/devices", qt, c.AnalyticsHandler.GetDeviceBreakdown)
+	protected.Get("/projects/:projectID/analytics/breakdown/geo", qt, c.AnalyticsHandler.GetGeoBreakdown)
+	protected.Get("/projects/:projectID/analytics/retention", qt, c.AnalyticsHandler.GetRetention)
+	protected.Get("/projects/:projectID/analytics/sessions", qt, c.AnalyticsHandler.GetSessions)
+	protected.Get("/projects/:projectID/catalog/events", qt, c.AnalyticsHandler.ListEvents)
+	protected.Get("/projects/:projectID/catalog/properties", qt, c.AnalyticsHandler.ListProperties)
+	protected.Get("/projects/:projectID/catalog/property-values", qt, c.AnalyticsHandler.ListPropertyValues)
+	protected.Get("/projects/:projectID/analytics/users", qt, c.AnalyticsHandler.ListUsers)
+	protected.Get("/projects/:projectID/analytics/users/:distinctId/timeline", qt, c.AnalyticsHandler.GetUserTimeline)
 
 	// Real-time live SSE stream
 	protected.Get("/projects/:projectID/live", c.LiveHandler.StreamLiveEvents)
@@ -146,7 +209,6 @@ func SetupWithContainer(c *Container) *fiber.App {
 	if c.IntelligenceHandler != nil {
 		protected.Get("/projects/:projectID/intelligence/digest", c.IntelligenceHandler.GetWeeklyDigest)
 		protected.Get("/projects/:projectID/intelligence/anomaly", c.IntelligenceHandler.CheckAnomaly)
-		protected.Post("/intelligence/dispatch-digests", c.IntelligenceHandler.TriggerDigestDispatch)
 	}
 
 	// Alert rules endpoints
@@ -186,6 +248,10 @@ func SetupWithContainer(c *Container) *fiber.App {
 		opsGroup.Delete("/dlq", auth.RequirePlatformStaff("ops"), c.DLQHandler.PurgeAllMessages)
 	}
 
+	if c.IntelligenceHandler != nil {
+		opsGroup.Post("/intelligence/dispatch-digests", auth.RequirePlatformStaff("ops"), c.IntelligenceHandler.TriggerDigestDispatch)
+	}
+
 	if c.MailerHandler != nil {
 		opsGroup.Get("/mailer/metrics", auth.RequirePlatformStaff("ops", "support"), c.MailerHandler.GetMetrics)
 	}
@@ -199,4 +265,67 @@ func Setup() *fiber.App {
 		panic(err)
 	}
 	return SetupWithContainer(container)
+}
+
+// registerReadiness serves /readyz and /api/v1/readyz: 503 while draining, else DB+Redis ping.
+func registerReadiness(app *fiber.App, c *Container) {
+	ready := func(ctx *fiber.Ctx) error {
+		if c.Draining() {
+			return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "draining"})
+		}
+		cctx, cancel := context.WithTimeout(ctx.UserContext(), 2*time.Second)
+		defer cancel()
+		if err := c.DBPool.Ping(cctx); err != nil {
+			return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "unavailable", "error": "database unavailable: " + err.Error()})
+		}
+		if err := c.RedisClient.Ping(cctx).Err(); err != nil {
+			return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "unavailable", "error": "redis unavailable: " + err.Error()})
+		}
+		return ctx.JSON(fiber.Map{"status": "ready", "services": fiber.Map{"postgres": "connected", "redis": "connected"}})
+	}
+	app.Get("/readyz", ready)
+}
+
+// Drainer is the shutdown hook surface of Container.
+type Drainer interface {
+	BeginDrain()
+	StopStreams()
+}
+
+type ServeOptions struct {
+	DrainDelay time.Duration
+	Timeout    time.Duration
+}
+
+// Serve listens on addr until ctx is cancelled, then: readiness 503, wait DrainDelay,
+// close SSE streams, shut down within Timeout. Returns listen errors (bind failure)
+// so callers exit non-zero.
+func Serve(ctx context.Context, app *fiber.App, addr string, d Drainer, opt ServeOptions) error {
+	listenErr := make(chan error, 1)
+	go func() { listenErr <- app.Listen(addr) }()
+
+	select {
+	case err := <-listenErr:
+		return err
+	case <-ctx.Done():
+	}
+
+	d.BeginDrain()
+	select {
+	case <-time.After(opt.DrainDelay):
+	case err := <-listenErr:
+		return err
+	}
+	d.StopStreams()
+
+	timeout := opt.Timeout
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+	if err := app.ShutdownWithContext(sctx); err != nil {
+		return err
+	}
+	return <-listenErr
 }

@@ -49,9 +49,7 @@ type ListAuditLogsParams struct {
 
 type ListAuditLogsResponse struct {
 	Items []WorkspaceAuditLog `json:"items"`
-	Total int64               `json:"total"`
-	Page  int                 `json:"page"`
-	Limit int                 `json:"limit"`
+	Total int64               `json:"-"`
 }
 
 type GDPRDeleteParams struct {

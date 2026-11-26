@@ -3,7 +3,11 @@
   import Badge from "$lib/components/ui/Badge.svelte";
   import Button from "$lib/components/ui/Button.svelte";
   import { Filter, ArrowDownRight, Plus, X } from "lucide-svelte";
-  import type { FunnelData } from "$lib/api";
+  import type { FunnelData, FunnelDropoffData } from "$lib/api";
+  import { FUNNEL_WINDOWS, dropoffPage, type FunnelOrder } from "$lib/funnel";
+  import { formatDuration } from "$lib/format-duration";
+
+  const DROPOFF_PAGE = 20;
 
   interface Props {
     funnel: FunnelData | null;
@@ -14,7 +18,10 @@
     step4?: string;
     step5?: string;
     availableEvents?: string[];
+    windowSize?: string;
+    order?: FunnelOrder;
     onCalculate: (steps: string[]) => void;
+    loadDropoff?: (step: number, offset: number, limit: number) => Promise<FunnelDropoffData | null>;
   }
 
   let {
@@ -26,8 +33,29 @@
     step4 = $bindable(""),
     step5 = $bindable(""),
     availableEvents = [],
-    onCalculate
+    windowSize = $bindable("14d"),
+    order = $bindable<FunnelOrder>("ordered"),
+    onCalculate,
+    loadDropoff
   }: Props = $props();
+
+  let dropoff = $state<FunnelDropoffData | null>(null);
+  let dropoffLoading = $state(false);
+
+  async function openDropoff(step: number, offset = 0) {
+    if (!loadDropoff) return;
+    dropoffLoading = true;
+    try {
+      dropoff = await loadDropoff(step, offset, DROPOFF_PAGE);
+    } finally {
+      dropoffLoading = false;
+    }
+  }
+
+  $effect(() => {
+    funnel;
+    dropoff = null;
+  });
 
   let showStep4 = $state(false);
   let showStep5 = $state(false);
@@ -169,6 +197,32 @@
       {/if}
     </div>
 
+    <div class="grid grid-cols-2 gap-2.5">
+      <div class="space-y-1">
+        <label for="funnel-window" class="text-[11px] font-medium text-[var(--text-muted)]">Conversion window</label>
+        <select
+          id="funnel-window"
+          bind:value={windowSize}
+          class="w-full px-3 py-1.5 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--primary-emerald)]"
+        >
+          {#each FUNNEL_WINDOWS as w}
+            <option value={w}>{w}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="space-y-1">
+        <label for="funnel-order" class="text-[11px] font-medium text-[var(--text-muted)]">Step order</label>
+        <select
+          id="funnel-order"
+          bind:value={order}
+          class="w-full px-3 py-1.5 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--primary-emerald)]"
+        >
+          <option value="ordered">Ordered (events in between allowed)</option>
+          <option value="strict">Strict (no events in between)</option>
+        </select>
+      </div>
+    </div>
+
     <div class="flex items-center justify-between pt-1">
       <div class="flex items-center gap-2">
         {#if !showStep4}
@@ -207,10 +261,25 @@
       {#each stepStats as st, i}
         {#if i > 0}
           <div class="flex items-center justify-between px-3 text-[11px] text-[var(--text-muted)]">
-            <div class="flex items-center gap-1 text-rose-500">
-              <ArrowDownRight class="w-3.5 h-3.5" />
-              <span>Drop-off: {st.dropOff.toLocaleString()} users</span>
-            </div>
+            {#if loadDropoff && st.dropOff > 0}
+              <button
+                type="button"
+                onclick={() => openDropoff(st.step - 1)}
+                class="flex items-center gap-1 text-rose-500 hover:underline cursor-pointer"
+                aria-label="Show users who dropped off after step {st.step - 1}"
+              >
+                <ArrowDownRight class="w-3.5 h-3.5" />
+                <span>Drop-off: {st.dropOff.toLocaleString()} users</span>
+              </button>
+            {:else}
+              <div class="flex items-center gap-1 text-rose-500">
+                <ArrowDownRight class="w-3.5 h-3.5" />
+                <span>Drop-off: {st.dropOff.toLocaleString()} users</span>
+              </div>
+            {/if}
+            {#if st.median_time_to_convert_seconds != null}
+              <span>Median time: <span class="font-bold text-[var(--text-primary)]">{formatDuration(st.median_time_to_convert_seconds)}</span></span>
+            {/if}
             <div class="flex items-center gap-1 text-[var(--text-secondary)]">
               <span>Step conversion:</span>
               <span class="font-bold text-[var(--text-primary)]">{st.stepToStepRate.toFixed(1)}%</span>
@@ -241,5 +310,40 @@
         </div>
       {/each}
     </div>
+
+    {#if dropoff || dropoffLoading}
+      {@const pg = dropoff ? dropoffPage(dropoff.offset, dropoff.limit, dropoff.total) : null}
+      <div class="p-3.5 rounded-2xl bg-[var(--bg-surface-elevated)] border border-[var(--border-subtle)] space-y-2" aria-live="polite">
+        <div class="flex items-center justify-between text-xs">
+          <span class="font-semibold text-[var(--text-primary)]">
+            {#if dropoff}Dropped after {dropoff.event_name} (did not reach {dropoff.next_event_name}){:else}Loading…{/if}
+          </span>
+          <button type="button" onclick={() => (dropoff = null)} class="text-[var(--text-muted)] hover:text-[var(--text-primary)]" aria-label="Close drop-off list">
+            <X class="w-3.5 h-3.5" />
+          </button>
+        </div>
+        {#if dropoff && pg}
+          {#if dropoff.items.length === 0}
+            <p class="text-[11px] text-[var(--text-muted)]">No users.</p>
+          {:else}
+            <ul class="divide-y divide-[var(--border-subtle)] text-[11px]">
+              {#each dropoff.items as u}
+                <li class="flex items-center justify-between py-1.5">
+                  <span class="font-mono text-[var(--text-primary)]">{u.distinct_id || u.person_key}</span>
+                  <span class="text-[var(--text-muted)]">last step {new Date(u.reached_at).toLocaleString()}</span>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+          <div class="flex items-center justify-between text-[11px] text-[var(--text-muted)]">
+            <span>{pg.from}–{pg.to} of {dropoff.total.toLocaleString()}</span>
+            <div class="flex gap-2">
+              <Button size="sm" variant="ghost" disabled={!pg.hasPrev || dropoffLoading} onclick={() => openDropoff(dropoff!.step, dropoff!.offset - dropoff!.limit)}>Prev</Button>
+              <Button size="sm" variant="ghost" disabled={!pg.hasNext || dropoffLoading} onclick={() => openDropoff(dropoff!.step, dropoff!.offset + dropoff!.limit)}>Next</Button>
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/if}
   {/if}
 </Card>

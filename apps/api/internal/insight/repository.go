@@ -48,7 +48,7 @@ func (r *pgRepository) List(ctx context.Context, projectID uuid.UUID) ([]Project
 		SELECT id, project_id, title, chart_type, event_name, aggregation, property_key, created_at, updated_at
 		FROM project_insights
 		WHERE project_id = $1
-		ORDER BY created_at ASC;
+		ORDER BY created_at ASC, id ASC;
 	`
 	rows, err := r.pool.Query(ctx, query, projectID)
 	if err != nil {
@@ -103,7 +103,7 @@ func (r *pgRepository) ComputeValue(ctx context.Context, projectID uuid.UUID, ev
 	var query string
 	switch strings.ToLower(aggregation) {
 	case "unique_users":
-		query = `SELECT COALESCE(COUNT(DISTINCT distinct_id), 0)::float8 FROM events WHERE project_id = $1 AND event_name = $2;`
+		query = `SELECT COALESCE(COUNT(DISTINCT person_key), 0)::float8 FROM resolved_events WHERE project_id = $1 AND event_name = $2;`
 		var val float64
 		err := r.pool.QueryRow(ctx, query, projectID, eventName).Scan(&val)
 		return val, err

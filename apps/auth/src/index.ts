@@ -5,6 +5,9 @@ import { auth, pool, devEmailOutbox, pushDevEmail } from "./auth";
 import { RoleRepository } from "./roles/repository";
 import { createSetupRoutes } from "./setup";
 import { createPgSetupStore } from "./setup-store";
+import { assertProductionSecrets, secretsMatch } from "./secrets";
+
+assertProductionSecrets();
 
 const roleRepo = new RoleRepository(pool);
 
@@ -1036,7 +1039,7 @@ app.post("/internal/session/introspect", async (c) => {
   const secretHeader = c.req.header("X-Internal-Auth");
   const expectedSecret = process.env.AUTH_INTERNAL_SECRET || "test-internal-secret";
 
-  if (!secretHeader || secretHeader !== expectedSecret) {
+  if (!secretsMatch(secretHeader, expectedSecret)) {
     return c.json({ error: "Unauthorized" }, 401);
   }
 

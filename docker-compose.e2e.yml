@@ -98,11 +98,15 @@ services:
       APP_ENV: "production"
       DATABASE_URL: "postgres://kinetiq:kinetiq@postgres:5432/kinetiq?sslmode=disable"
       REDIS_URL: "redis://redis:6379/0"
+      AUTH_INTERNAL_SECRET: "e2e-secret-key-must-be-at-least-32-chars-long" # gitleaks:allow
 
   web:
     build:
       context: ./apps/web
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: "http://localhost:8080/api/v1"
+        VITE_AUTH_URL: "http://localhost:3001"
     container_name: kinetiq-e2e-web
     restart: "no"
     depends_on:

@@ -1,5 +1,7 @@
 import { KinetiqConfig, IngestEvent } from './types';
 import { StorageEngine, MemoryStorage, LocalStorageAdapter, IndexedDBStorage } from './storage';
+import { SessionManager, DEFAULT_SESSION_TIMEOUT_MS } from './session';
+import { startAutocapture } from './autocapture';
 
 function createEventId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -30,22 +32,36 @@ export class KinetiqClient {
   private storageKey: string;
   private autoSyncOnOnline: boolean;
   private flushOnPageHide: boolean;
+  private requestTimeoutMs: number;
   private retryAttempt = 0;
   private baseRetryMs = 1000;
   private onlineHandler: (() => void) | null = null;
   private visibilityHandler: (() => void) | null = null;
   private pagehideHandler: (() => void) | null = null;
   private useMemoryQueue = false;
+  private autocapture: boolean;
+  private optedOut: boolean;
+  private session: SessionManager | null = null;
+  private stopAutocapture: (() => void) | null = null;
 
   constructor(config: KinetiqConfig) {
     this.apiKey = config.apiKey;
     this.endpoint = (config.endpoint || 'http://localhost:8080').replace(/\/$/, '');
     this.maxBatchSize = config.maxBatchSize || 50;
+    this.requestTimeoutMs = config.requestTimeoutMs && config.requestTimeoutMs > 0 ? config.requestTimeoutMs : 10000;
     this.maxQueueSize = config.maxQueueSize && config.maxQueueSize > 0 ? config.maxQueueSize : 1000;
     this.currentUserId = config.defaultUserId;
     this.storageKey = config.storageKey || 'kinetiq_telemetry_events';
     this.autoSyncOnOnline = config.autoSyncOnOnline !== false;
     this.flushOnPageHide = config.flushOnPageHide !== false;
+    this.autocapture = config.autocapture !== false && isBrowser();
+    const dnt = isBrowser() && config.respectDoNotTrack !== false && ['1', 'yes'].includes(String(window.navigator?.doNotTrack));
+    this.optedOut = config.optedOut === true || dnt;
+    if (this.autocapture) {
+      let store: Storage | undefined;
+      try { store = window.localStorage; } catch {}
+      this.session = new SessionManager(config.sessionTimeoutMs || DEFAULT_SESSION_TIMEOUT_MS, store);
+    }
 
     const preferred = config.storage;
     if (preferred === undefined) {
@@ -89,6 +105,27 @@ export class KinetiqClient {
         window.addEventListener('pagehide', this.pagehideHandler);
       }
     }
+
+    if (!this.optedOut) this.startAutocapture();
+  }
+
+  private startAutocapture(): void {
+    if (!this.autocapture || this.stopAutocapture) return;
+    this.stopAutocapture = startAutocapture({ window, document }, (name, props) => {
+      this.track(name, props);
+      if (name === '$pageleave' && this.useMemoryQueue) void this.flushKeepAlive();
+    });
+  }
+
+  public optOut(): void {
+    this.optedOut = true;
+    this.stopAutocapture?.();
+    this.stopAutocapture = null;
+  }
+
+  public optIn(): void {
+    this.optedOut = false;
+    this.startAutocapture();
   }
 
   public identify(userId: string, traits?: Record<string, unknown>): void {
@@ -99,7 +136,11 @@ export class KinetiqClient {
   }
 
   public track(eventName: string, properties?: Record<string, unknown>, userId?: string): void {
+    if (this.optedOut) return;
     const now = new Date().toISOString();
+    if (this.session && properties?.$session_id === undefined) {
+      properties = { ...properties, $session_id: this.session.touch() };
+    }
     const resolvedUser =
       userId ||
       (typeof properties?.distinct_id === 'string' ? properties.distinct_id : undefined) ||
@@ -162,19 +203,9 @@ export class KinetiqClient {
       const batch = [...this.queue];
       this.queue = [];
 
-      const ingestUrl = this.endpoint.endsWith('/api/v1/ingest')
-        ? this.endpoint
-        : `${this.endpoint}/api/v1/ingest`;
 
       try {
-        const response = await fetch(ingestUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.apiKey}`,
-          },
-          body: JSON.stringify({ events: batch }),
-        });
+        const response = await this.post(batch);
 
         if (!response.ok) {
           const isRetryable = response.status === 429 || response.status >= 500;
@@ -195,19 +226,9 @@ export class KinetiqClient {
       const batch = await this.storage.dequeue(Math.min(count, this.maxBatchSize));
       if (batch.length === 0) return;
 
-      const ingestUrl = this.endpoint.endsWith('/api/v1/ingest')
-        ? this.endpoint
-        : `${this.endpoint}/api/v1/ingest`;
 
       try {
-        const response = await fetch(ingestUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.apiKey}`,
-          },
-          body: JSON.stringify({ events: batch }),
-        });
+        const response = await this.post(batch);
 
         if (response.ok) {
           this.retryAttempt = 0;
@@ -230,6 +251,29 @@ export class KinetiqClient {
     } catch {}
   }
 
+  // fetch with AbortController timeout so a hung request cannot block the queue.
+  private async post(batch: IngestEvent[], keepalive = false): Promise<Response> {
+    const ingestUrl = this.endpoint.endsWith('/api/v1/ingest')
+      ? this.endpoint
+      : `${this.endpoint}/api/v1/ingest`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    try {
+      return await fetch(ingestUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({ events: batch }),
+        signal: controller.signal,
+        ...(keepalive ? { keepalive: true } : {}),
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private requeue(batch: IngestEvent[]): void {
     this.queue.unshift(...batch);
     if (this.queue.length > this.maxQueueSize) {
@@ -237,43 +281,33 @@ export class KinetiqClient {
     }
   }
 
-  public flushKeepAlive(): void {
-    if (!isBrowser()) return;
-    void (async () => {
+  // Unload path: fetch+keepalive carries the Authorization header (sendBeacon cannot),
+  // so the ingest API accepts the batch. Requeued on failure.
+  public async flushKeepAlive(): Promise<void> {
+    try {
+      let batch: IngestEvent[] = [];
+      if (this.useMemoryQueue) {
+        if (this.queue.length === 0) return;
+        batch = this.queue.splice(0, Math.min(this.queue.length, this.maxBatchSize));
+      } else {
+        const count = await this.storage.count();
+        if (count === 0) return;
+        batch = await this.storage.dequeue(Math.min(count, this.maxBatchSize));
+      }
+      if (batch.length === 0) return;
+      const requeue = async () => { if (this.useMemoryQueue) this.requeue(batch); else await this.storage.requeue(batch); };
       try {
-        let batch: IngestEvent[] = [];
-        if (this.useMemoryQueue) {
-          if (this.queue.length === 0) return;
-          batch = this.queue.splice(0, Math.min(this.queue.length, this.maxBatchSize));
-        } else {
-          const count = await this.storage.count();
-          if (count === 0) return;
-          batch = await this.storage.dequeue(Math.min(count, this.maxBatchSize));
-        }
-        if (batch.length === 0) return;
-        const ingestUrl = this.endpoint.endsWith('/api/v1/ingest')
-          ? this.endpoint
-          : `${this.endpoint}/api/v1/ingest`;
-        const body = JSON.stringify({ events: batch });
-        if (typeof navigator !== 'undefined' && typeof (navigator as any).sendBeacon === 'function') {
-          const blob = new Blob([body], { type: 'application/json' });
-          const sent = (navigator as any).sendBeacon(ingestUrl, blob);
-          if (!sent) {
-            try { await fetch(ingestUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` }, body, keepalive: true }); }
-            catch { if (this.useMemoryQueue) this.requeue(batch); else await this.storage.requeue(batch); }
-          }
-        } else {
-          try {
-            await fetch(ingestUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` }, body, keepalive: true });
-          } catch {
-            if (this.useMemoryQueue) this.requeue(batch); else await this.storage.requeue(batch);
-          }
-        }
-      } catch {}
-    })();
+        const response = await this.post(batch, true);
+        if (!response.ok && (response.status === 429 || response.status >= 500)) await requeue();
+      } catch {
+        await requeue();
+      }
+    } catch {}
   }
 
   public destroy(): void {
+    this.stopAutocapture?.();
+    this.stopAutocapture = null;
     if (this.flushTimer) {
       clearInterval(this.flushTimer);
       this.flushTimer = null;

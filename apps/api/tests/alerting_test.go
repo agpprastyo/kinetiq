@@ -18,6 +18,7 @@ import (
 	db "kinetiq/db/sqlc"
 	"kinetiq/internal/alerting"
 	"kinetiq/internal/app"
+	"kinetiq/internal/webhook"
 )
 
 func TestWebhookDispatchSignature(t *testing.T) {
@@ -32,7 +33,7 @@ func TestWebhookDispatchSignature(t *testing.T) {
 	defer server.Close()
 
 	secret := "wh_sec_9999"
-	dispatcher := alerting.NewDispatcher()
+	dispatcher := alerting.NewDispatcherWithClient(http.DefaultClient)
 	payload := []byte(`{"event":"alert.triggered","count":150}`)
 
 	err := dispatcher.Dispatch(context.Background(), server.URL, secret, payload)
@@ -79,7 +80,7 @@ func TestAlertEvaluator(t *testing.T) {
 }
 
 func TestMultiChannelDispatch(t *testing.T) {
-	dispatcher := alerting.NewDispatcher()
+	dispatcher := alerting.NewDispatcherWithClient(http.DefaultClient)
 
 	t.Run("dispatches slack notification", func(t *testing.T) {
 		var receivedBody []byte
@@ -245,7 +246,7 @@ func TestAlertingServiceEvaluation(t *testing.T) {
 }
 
 func TestDispatcherErrorPaths(t *testing.T) {
-	dispatcher := alerting.NewDispatcher()
+	dispatcher := alerting.NewDispatcherWithClient(http.DefaultClient)
 	ctx := context.Background()
 
 	// Unsupported channel
@@ -360,7 +361,7 @@ func TestAlertingSQLRepositoryAndService(t *testing.T) {
 	updated.CooldownMinutes = 0
 	_, _ = repo.UpdateRule(ctx, *updated)
 
-	svc := alerting.NewService(repo, alerting.NewDispatcher(), container.RedisClient, container.Logger)
+	svc := alerting.NewService(repo, alerting.NewDispatcherWithClient(http.DefaultClient), container.RedisClient, container.Logger)
 	// Clear any cooldown lock in Redis
 	if container.RedisClient != nil {
 		_ = container.RedisClient.Del(ctx, "lock:alert_rule:"+updated.ID).Err()
@@ -379,5 +380,38 @@ func TestAlertingSQLRepositoryAndService(t *testing.T) {
 	// 9. Delete rule
 	if err := repo.DeleteRule(ctx, ruleUUID); err != nil {
 		t.Fatalf("failed to delete rule: %v", err)
+	}
+}
+
+func TestDispatcherBlocksPrivateDestinations(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
+	defer srv.Close()
+
+	d := alerting.NewDispatcher()
+	for _, u := range []string{srv.URL, "http://169.254.169.254/latest/meta-data/"} {
+		if err := d.DispatchRule(context.Background(), alerting.AlertRule{ChannelType: "webhook", WebhookURL: u}, alerting.DispatchPayload{}); err == nil {
+			t.Errorf("expected %s to be blocked at dial time", u)
+		}
+	}
+}
+
+func TestDispatcherDoesNotFollowRedirectsToInternalHosts(t *testing.T) {
+	var hit bool
+	internal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
+	defer internal.Close()
+	redir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, internal.URL, http.StatusFound)
+	}))
+	defer redir.Close()
+
+	// Unrestricted dial (loopback test servers) but default redirect policy of the safe client.
+	safe := webhook.NewSafeHTTPClient(2 * time.Second)
+	safe.Transport = http.DefaultTransport
+	d := alerting.NewDispatcherWithClient(safe)
+	if err := d.Dispatch(context.Background(), redir.URL, "s", []byte(`{}`)); err == nil {
+		t.Error("302 must be treated as non-2xx, not followed")
+	}
+	if hit {
+		t.Error("redirect target must never be contacted")
 	}
 }

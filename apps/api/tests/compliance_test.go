@@ -23,7 +23,7 @@ func TestWorkspaceAudit_RecordAndQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create container: %v", err)
 	}
-	server := app.SetupWithContainer(container)
+	server := app.SetupWithContainer(withFakeAuth(container))
 
 	t.Run("creating project and API key records audit logs", func(t *testing.T) {
 		// 1. Create a project
@@ -95,7 +95,9 @@ func TestWorkspaceAudit_RecordAndQuery(t *testing.T) {
 		var auditResult struct {
 			Success bool `json:"success"`
 			Data    struct {
-				Total int64 `json:"total"`
+				Pagination struct {
+					Total int64 `json:"total"`
+				} `json:"pagination"`
 				Items []struct {
 					Action     string `json:"action"`
 					TargetType string `json:"target_type"`
@@ -105,8 +107,8 @@ func TestWorkspaceAudit_RecordAndQuery(t *testing.T) {
 		}
 		json.NewDecoder(auditResp.Body).Decode(&auditResult)
 
-		if auditResult.Data.Total < 3 {
-			t.Errorf("expected at least 3 audit log entries, got %d", auditResult.Data.Total)
+		if auditResult.Data.Pagination.Total < 3 {
+			t.Errorf("expected at least 3 audit log entries, got %d", auditResult.Data.Pagination.Total)
 		}
 
 		// Verify expected actions exist

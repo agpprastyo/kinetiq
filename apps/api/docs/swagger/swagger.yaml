@@ -10,6 +10,34 @@ definitions:
     required:
     - name
     type: object
+  project.Project:
+    properties:
+      allowed_origins:
+        type: string
+      anonymize_ip:
+        type: boolean
+      api_key:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      owner_user_id:
+        type: string
+      rate_limit_per_sec:
+        type: integer
+      retention_days:
+        type: integer
+      role:
+        description: owner, admin, viewer
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+    type: object
   project.ProjectResponse:
     properties:
       api_key:
@@ -23,6 +51,11 @@ definitions:
         type: string
       name:
         example: My Web App
+        type: string
+      project:
+        $ref: '#/definitions/project.Project'
+      status:
+        example: active
         type: string
     type: object
   response.ErrorBody:
@@ -58,6 +91,22 @@ info:
   title: Kinetiq Analytics API
   version: "1.0"
 paths:
+  /api/v1/alias:
+    post:
+      responses: {}
+      security:
+      - ApiKeyAuth: []
+      summary: Link two known IDs to the same person
+      tags:
+      - identity
+  /api/v1/identify:
+    post:
+      responses: {}
+      security:
+      - ApiKeyAuth: []
+      summary: Link an anonymous distinct_id to an identified user
+      tags:
+      - identity
   /api/v1/ingest:
     post:
       consumes:
@@ -145,6 +194,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "500":
           description: Internal Server Error
           schema:
@@ -155,6 +210,21 @@ paths:
       tags:
       - projects
   /api/v1/projects/{projectID}:
+    delete:
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: Delete a project permanently
+      tags:
+      - projects
     get:
       description: Returns project details by ID for the owner (never returns API
         key hash)
@@ -186,9 +256,29 @@ paths:
       summary: Get project details
       tags:
       - projects
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: Update project settings and name
+      tags:
+      - projects
   /api/v1/projects/{projectID}/analytics/funnel:
     get:
-      description: Multi-step conversion rates and step counts
+      description: Per-step person counts, conversion rate and median time-to-convert,
+        computed in SQL
       parameters:
       - description: Project UUID
         in: path
@@ -205,15 +295,117 @@ paths:
         name: to
         required: true
         type: string
-      - description: Comma-separated event names (2-3 steps)
+      - description: Comma-separated event names (2-5 steps)
         in: query
         name: steps
         required: true
+        type: string
+      - description: Conversion window from step 1, e.g. 30m, 12h, 7d (1s-90d, default
+          14d)
+        in: query
+        name: window
+        type: string
+      - description: ordered (default) or strict (no other events between steps)
+        in: query
+        name: order
+        type: string
+      - description: Filter DSL JSON
+        in: query
+        name: filter
+        type: string
+      - description: Property to break down by (step-1 event value)
+        in: query
+        name: breakdown_by
         type: string
       produces:
       - application/json
       responses: {}
       summary: Funnel analytics
+      tags:
+      - analytics
+  /api/v1/projects/{projectID}/analytics/funnel/dropoff:
+    get:
+      description: Persons who reached `step` but not the next step, paginated by
+        person key
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      - description: Start timestamp RFC3339
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End timestamp RFC3339
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Comma-separated event names (2-5 steps)
+        in: query
+        name: steps
+        required: true
+        type: string
+      - description: 1-based step the users stopped at (1..len(steps)-1)
+        in: query
+        name: step
+        required: true
+        type: integer
+      - description: Conversion window (default 14d)
+        in: query
+        name: window
+        type: string
+      - description: ordered or strict
+        in: query
+        name: order
+        type: string
+      - description: Page size (1-200, default 50)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses: {}
+      summary: Funnel drop-off users
+      tags:
+      - analytics
+  /api/v1/projects/{projectID}/analytics/sessions:
+    get:
+      description: Sessions derived from events (30-min inactivity timeout by default)
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      - description: Start timestamp RFC3339
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: End timestamp RFC3339
+        in: query
+        name: to
+        required: true
+        type: string
+      - description: Inactivity timeout in minutes (1-1440, default 30)
+        in: query
+        name: timeout_minutes
+        type: integer
+      - description: Max sessions listed (1-200, default 50)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses: {}
+      summary: Sessions
       tags:
       - analytics
   /api/v1/projects/{projectID}/analytics/summary:
@@ -299,4 +491,258 @@ paths:
       summary: Event volume time-series
       tags:
       - analytics
+  /api/v1/projects/{projectID}/catalog/events:
+    get:
+      description: Event names for the project with count and last-seen
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      - description: Case-insensitive name substring
+        in: query
+        name: search
+        type: string
+      - description: Max results (1-500, default 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses: {}
+      summary: Event catalog
+      tags:
+      - analytics
+  /api/v1/projects/{projectID}/catalog/properties:
+    get:
+      description: Event or person properties with inferred type
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      - description: event (default) or person
+        in: query
+        name: scope
+        type: string
+      - description: Restrict event properties to one event
+        in: query
+        name: event_name
+        type: string
+      - description: Case-insensitive name substring
+        in: query
+        name: search
+        type: string
+      - description: Max results (1-500, default 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses: {}
+      summary: Property catalog
+      tags:
+      - analytics
+  /api/v1/projects/{projectID}/catalog/property-values:
+    get:
+      description: Most frequent values of a property
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      - description: Property name
+        in: query
+        name: property
+        required: true
+        type: string
+      - description: event (default) or person
+        in: query
+        name: scope
+        type: string
+      - description: Restrict to one event
+        in: query
+        name: event_name
+        type: string
+      - description: Case-insensitive value substring
+        in: query
+        name: search
+        type: string
+      - description: Max results (1-500, default 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses: {}
+      summary: Sample property values
+      tags:
+      - analytics
+  /api/v1/projects/{projectID}/compliance/users/{distinctID}:
+    delete:
+      description: Purge or pseudonymize all events belonging to a user distinct_id
+      produces:
+      - application/json
+      responses: {}
+      summary: GDPR / Privacy Right-to-be-forgotten deletion
+      tags:
+      - compliance
+  /api/v1/projects/{projectID}/keys:
+    get:
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: List all API keys for a project
+      tags:
+      - projects
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: Create an additional named API key for a project
+      tags:
+      - projects
+  /api/v1/projects/{projectID}/keys/{keyID}:
+    delete:
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      - description: Key UUID
+        in: path
+        name: keyID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: Revoke a specific API key by ID
+      tags:
+      - projects
+  /api/v1/projects/{projectID}/purge-events:
+    post:
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: Purge all events for a project without deleting the project
+      tags:
+      - projects
+  /api/v1/projects/{projectID}/retention:
+    get:
+      description: Retrieve current retention period in days for a project
+      produces:
+      - application/json
+      responses: {}
+      summary: Get project retention policy
+      tags:
+      - retention
+    put:
+      consumes:
+      - application/json
+      description: Configure retention period in days (0 or less = unlimited)
+      produces:
+      - application/json
+      responses: {}
+      summary: Update project retention policy
+      tags:
+      - retention
+  /api/v1/projects/{projectID}/retention/preview:
+    get:
+      description: Inspect number of events that would be deleted under current retention
+        policy
+      produces:
+      - application/json
+      responses: {}
+      summary: Preview affected row count before executing retention purge
+      tags:
+      - retention
+  /api/v1/projects/{projectID}/retention/run:
+    post:
+      description: Purge events older than project retention policy
+      produces:
+      - application/json
+      responses: {}
+      summary: Manually trigger retention policy execution
+      tags:
+      - retention
+  /api/v1/projects/{projectID}/rotate-key:
+    post:
+      description: Revokes active API keys for project and generates a brand new key
+      parameters:
+      - description: Project UUID
+        in: path
+        name: projectID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/response.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/response.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/response.Response'
+      summary: Rotate project API key
+      tags:
+      - projects
+  /api/v1/workspace/audit-logs:
+    get:
+      description: Retrieve append-only audit trail logs for workspace actions (owner/admin
+        only)
+      produces:
+      - application/json
+      responses: {}
+      summary: List workspace audit trail logs
+      tags:
+      - compliance
 swagger: "2.0"

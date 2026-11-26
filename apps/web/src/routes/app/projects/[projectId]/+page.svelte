@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, untrack } from "svelte";
+  import type { FunnelOrder } from "$lib/funnel";
   import { page } from "$app/state";
   import { authClient } from "$lib/auth-client";
   import {
@@ -16,6 +17,7 @@
     type CreateInsightPayload,
     type WeeklyDigestReport,
     type DeviceBreakdownItem,
+    type SessionsResponse,
     type GeoBreakdownItem,
   } from "$lib/api";
   import Button from "$lib/components/ui/Button.svelte";
@@ -26,6 +28,9 @@
   import FunnelVisualizer from "$lib/components/analytics/FunnelVisualizer.svelte";
   import PropertyBreakdown from "$lib/components/analytics/PropertyBreakdown.svelte";
   import DeviceAndGeoBreakdown from "$lib/components/analytics/DeviceAndGeoBreakdown.svelte";
+  import SessionsCard from "$lib/components/analytics/SessionsCard.svelte";
+  import FilterPicker from "$lib/components/analytics/FilterPicker.svelte";
+  import type { QueryExtras } from "$lib/filters";
   import RetentionHeatmap from "$lib/components/analytics/RetentionHeatmap.svelte";
   import InsightWidgetGrid from "$lib/components/analytics/InsightWidgetGrid.svelte";
   import CreateInsightModal from "$lib/components/analytics/CreateInsightModal.svelte";
@@ -78,13 +83,19 @@
   let devices = $state<DeviceBreakdownItem[]>([]);
   let geo = $state<GeoBreakdownItem[]>([]);
   let deviceGeoLoading = $state(false);
+  let sessions = $state<SessionsResponse | null>(null);
+  let sessionsLoading = $state(false);
 
   let selectedRange = $state("24h");
+  let queryExtras = $state<QueryExtras>({});
   let funnelStep1 = $state("page_view");
   let funnelStep2 = $state("signup");
   let funnelStep3 = $state("");
   let funnelStep4 = $state("");
   let funnelStep5 = $state("");
+  let funnelWindow = $state("14d");
+  let funnelOrder = $state<FunnelOrder>("ordered");
+  let funnelSteps: string[] = [];
 
   let breakdownEvent = $state("page_view");
   let breakdownProp = $state("browser");
@@ -96,6 +107,8 @@
   let exporting = $state(false);
   let copied = $state(false);
   let error = $state("");
+  // Per-card failures, kept apart from "no data" so an outage never looks like an empty project.
+  let cardErrors = $state<{ summary?: string; top?: string; volume?: string }>({});
 
   let currentAbortController: AbortController | null = null;
   let lastLoadedKey = "";
@@ -191,20 +204,26 @@
       loading = true;
     }
     error = "";
+    const errs: typeof cardErrors = {};
+    const fail = <T,>(key: keyof typeof cardErrors, fallback: T) => (e: any): T => {
+      if (e?.name !== "AbortError") errs[key] = e?.message || "Failed to load.";
+      return fallback;
+    };
     const { from, to } = getDateRange(selectedRange);
 
     try {
       const [projData, keysData, sumData, topData, volData, quotaData] = await Promise.all([
         api.getProject(projectId, signal),
         api.listApiKeys(projectId, signal).catch(() => []),
-        api.getSummary(projectId, from, to, signal).catch(() => ({ total_events: 0, unique_distinct_ids: 0 })),
-        api.getTopEvents(projectId, from, to, 10, signal).catch(() => []),
-        api.getVolume(projectId, from, to, selectedRange === "1h" ? "minute" : "hour", signal).catch(() => ({ interval: "hour", points: [] })),
+        api.getSummary(projectId, from, to, signal, queryExtras).catch(fail("summary", { total_events: 0, unique_distinct_ids: 0 })),
+        api.getTopEvents(projectId, from, to, 10, signal, queryExtras).catch(fail("top", [])),
+        api.getVolume(projectId, from, to, selectedRange === "1h" ? "minute" : "hour", signal, queryExtras).catch(fail("volume", { interval: "hour", points: [] })),
         api.getProjectQuota(projectId, signal).catch(() => null),
       ]);
 
       if (signal.aborted) return;
 
+      cardErrors = errs;
       project = projData;
       apiKeys = keysData || [];
       summary = sumData;
@@ -228,6 +247,7 @@
         loadFunnel(undefined, signal),
         loadBreakdown(breakdownEvent, breakdownProp, signal),
         loadDeviceAndGeo(signal),
+        loadSessions(signal),
         loadRetention(signal),
         loadInsights(signal),
         loadDigest(signal),
@@ -257,7 +277,10 @@
       funnelLoading = true;
       const { from, to } = getDateRange(selectedRange);
       try {
-        funnel = await api.getFunnel(projectId, from, to, steps, signal).catch(() => null);
+        funnelSteps = steps;
+        funnel = await api
+          .getFunnel(projectId, from, to, steps, signal, { filter: queryExtras.filter }, { window: funnelWindow, order: funnelOrder })
+          .catch(() => null);
       } finally {
         if (!signal?.aborted) {
           funnelLoading = false;
@@ -268,13 +291,20 @@
     }
   }
 
+  function loadFunnelDropoff(step: number, offset: number, limit: number) {
+    const { from, to } = getDateRange(selectedRange);
+    return api
+      .getFunnelDropoff(projectId, from, to, funnelSteps, step, offset, limit, undefined, { filter: queryExtras.filter }, { window: funnelWindow, order: funnelOrder })
+      .catch(() => null);
+  }
+
   async function loadBreakdown(evName: string, propName: string, signal?: AbortSignal) {
     if (!evName || !propName) return;
     breakdownLoading = true;
     const { from, to } = getDateRange(selectedRange);
     try {
       breakdown = await api
-        .getPropertyBreakdown(projectId, evName, propName, from, to, 10, signal)
+        .getPropertyBreakdown(projectId, evName, propName, from, to, 10, signal, { filter: queryExtras.filter })
         .catch(() => []);
     } finally {
       if (!signal?.aborted) {
@@ -300,11 +330,23 @@
     }
   }
 
+  async function loadSessions(signal?: AbortSignal) {
+    sessionsLoading = true;
+    const { from, to } = getDateRange(selectedRange);
+    try {
+      sessions = await api.getSessions(projectId, from, to, 50, signal).catch(() => null);
+    } finally {
+      if (!signal?.aborted) {
+        sessionsLoading = false;
+      }
+    }
+  }
+
   async function loadRetention(signal?: AbortSignal) {
     retentionLoading = true;
     const { from, to } = getDateRange(selectedRange);
     try {
-      retention = await api.getRetention(projectId, from, to, "signup", "app_opened", "day", signal).catch(() => null);
+      retention = await api.getRetention(projectId, from, to, "signup", "app_opened", "day", signal, { filter: queryExtras.filter }).catch(() => null);
     } finally {
       if (!signal?.aborted) {
         retentionLoading = false;
@@ -354,10 +396,6 @@
     }
   }
 
-  async function handleTriggerDigestDispatch() {
-    await api.triggerDispatchDigests();
-    await loadDigest();
-  }
 
   function handleRangeChange(rangeId: string) {
     selectedRange = rangeId;
@@ -502,10 +540,35 @@
     </div>
   </div>
 
+  {#if cardErrors.summary}
+    <div role="alert" class="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs font-medium text-rose-600 dark:text-rose-400 flex items-center justify-between">
+      <span>Summary unavailable: {cardErrors.summary}</span>
+      <Button variant="danger" size="sm" onclick={() => loadData(true)}>Retry</Button>
+    </div>
+  {/if}
+
   {#if error}
     <div class="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs font-medium text-rose-600 dark:text-rose-400 flex items-center justify-between">
       <span>{error}</span>
       <Button variant="danger" size="sm" onclick={() => loadData(true)}>Try Again</Button>
+    </div>
+  {/if}
+
+  <FilterPicker
+    {projectId}
+    onApply={(extras) => {
+      queryExtras = extras;
+      loadData(true);
+    }}
+  />
+
+  {#if summary?.breakdown?.length}
+    <div class="flex flex-wrap gap-2 text-[11px]" aria-label="Breakdown">
+      {#each summary.breakdown as b}
+        <span class="px-2.5 py-1 rounded-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] font-mono">
+          {b.value}: <strong>{b.count.toLocaleString()}</strong>
+        </span>
+      {/each}
     </div>
   {/if}
 
@@ -739,7 +802,14 @@
           </div>
         </div>
 
-        <VolumeChart points={volume ? volume.points : []} height={215} mode="bars" />
+        {#if cardErrors.volume}
+          <div role="alert" class="py-12 text-center text-xs text-rose-600 dark:text-rose-400 space-y-3">
+            <div>{cardErrors.volume}</div>
+            <Button variant="danger" size="sm" onclick={() => loadData(true)}>Retry</Button>
+          </div>
+        {:else}
+          <VolumeChart points={volume ? volume.points : []} height={215} mode="bars" />
+        {/if}
       </Card>
 
       <!-- 2. Most Frequent User Actions Table -->
@@ -756,7 +826,12 @@
           <Badge variant="neutral">{topEvents.length} actions</Badge>
         </div>
 
-        {#if topEvents.length === 0}
+        {#if cardErrors.top}
+          <div role="alert" class="py-12 text-center text-xs text-rose-600 dark:text-rose-400 space-y-3">
+            <div>{cardErrors.top}</div>
+            <Button variant="danger" size="sm" onclick={() => loadData(true)}>Retry</Button>
+          </div>
+        {:else if topEvents.length === 0}
           <div class="py-12 text-center text-xs text-[var(--text-muted)]">
             No user activity recorded in this time period yet. Send a test event from Project Settings to see your data here.
           </div>
@@ -936,20 +1011,38 @@
 
   <!-- Custom Insights & Saved Charts (Widget Builder) -->
   <div class="pt-2">
-    <InsightWidgetGrid
-      {insights}
-      loading={insightsLoading}
-      onAddInsight={() => { isCreateInsightOpen = true; }}
-      onDeleteInsight={handleDeleteInsight}
-    />
+    <svelte:boundary>
+      <InsightWidgetGrid
+        {insights}
+        loading={insightsLoading}
+        onAddInsight={() => { isCreateInsightOpen = true; }}
+        onDeleteInsight={handleDeleteInsight}
+      />
+      {#snippet failed(err, reset)}
+        <div role="alert" class="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-600 dark:text-rose-400 flex items-center justify-between"><span>This widget failed to render.</span><button class="underline font-semibold" onclick={reset}>Retry</button></div>
+      {/snippet}
+    </svelte:boundary>
   </div>
 
+  <!-- Web Analytics: Sessions, Entry Pages, Referrers -->
+  <svelte:boundary>
+    <SessionsCard {sessions} loading={sessionsLoading} />
+    {#snippet failed(err, reset)}
+      <div role="alert" class="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-600 dark:text-rose-400 flex items-center justify-between"><span>This widget failed to render.</span><button class="underline font-semibold" onclick={reset}>Retry</button></div>
+    {/snippet}
+  </svelte:boundary>
+
   <!-- Ingestion Intelligence: Client Fingerprinting & Device / Geo Breakdowns -->
-  <DeviceAndGeoBreakdown
-    {devices}
-    {geo}
-    loading={deviceGeoLoading}
-  />
+  <svelte:boundary>
+    <DeviceAndGeoBreakdown
+      {devices}
+      {geo}
+      loading={deviceGeoLoading}
+    />
+    {#snippet failed(err, reset)}
+      <div role="alert" class="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-600 dark:text-rose-400 flex items-center justify-between"><span>This widget failed to render.</span><button class="underline font-semibold" onclick={reset}>Retry</button></div>
+    {/snippet}
+  </svelte:boundary>
 
   <!-- Deep Exploration Row: Step-by-Step Conversion & Breakdown by Detail -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 pt-2">
@@ -961,6 +1054,9 @@
       bind:step3={funnelStep3}
       bind:step4={funnelStep4}
       bind:step5={funnelStep5}
+      bind:windowSize={funnelWindow}
+      bind:order={funnelOrder}
+      loadDropoff={loadFunnelDropoff}
       availableEvents={topEvents.map((t) => t.event_name)}
       onCalculate={(steps) => loadFunnel(steps)}
     />
@@ -976,20 +1072,29 @@
 
   <!-- Enterprise Analytics: User Retention & Cohort Heatmap Matrix -->
   <div class="pt-2">
-    <RetentionHeatmap
-      data={retention}
-      loading={retentionLoading}
-      onRefresh={() => loadRetention()}
-    />
+    <svelte:boundary>
+      <RetentionHeatmap
+        data={retention}
+        loading={retentionLoading}
+        onRefresh={() => loadRetention()}
+      />
+      {#snippet failed(err, reset)}
+        <div role="alert" class="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-600 dark:text-rose-400 flex items-center justify-between"><span>This widget failed to render.</span><button class="underline font-semibold" onclick={reset}>Retry</button></div>
+      {/snippet}
+    </svelte:boundary>
   </div>
 
   <!-- Automated Intelligence: Weekly Email Digest Performance Summary -->
   <div class="pt-2">
-    <WeeklyDigestCard
-      digest={weeklyDigest}
-      loading={digestLoading}
-      onTriggerDispatch={handleTriggerDigestDispatch}
-    />
+    <svelte:boundary>
+      <WeeklyDigestCard
+        digest={weeklyDigest}
+        loading={digestLoading}
+      />
+      {#snippet failed(err, reset)}
+        <div role="alert" class="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-600 dark:text-rose-400 flex items-center justify-between"><span>This widget failed to render.</span><button class="underline font-semibold" onclick={reset}>Retry</button></div>
+      {/snippet}
+    </svelte:boundary>
   </div>
 
   <CreateInsightModal

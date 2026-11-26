@@ -28,7 +28,7 @@ func TestObservabilityAndHealthSeam(t *testing.T) {
 	defer container.DBPool.Close()
 	defer container.RedisClient.Close()
 
-	server := app.SetupWithContainer(container)
+	server := app.SetupWithContainer(withFakeAuth(container))
 
 	t.Run("GET /healthz returns 200 alive without database ping", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)

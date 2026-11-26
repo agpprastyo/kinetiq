@@ -6,11 +6,13 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
+
+	"kinetiq/internal/response"
 )
 
 type Service interface {
 	CreateInsight(ctx context.Context, projectID uuid.UUID, req *CreateInsightRequest) (*ProjectInsight, error)
-	ListInsights(ctx context.Context, projectID uuid.UUID) ([]ProjectInsight, error)
+	ListInsights(ctx context.Context, projectID uuid.UUID, p response.OffsetParams) ([]ProjectInsight, int64, error)
 	UpdateInsight(ctx context.Context, projectID, insightID uuid.UUID, req *UpdateInsightRequest) (*ProjectInsight, error)
 	DeleteInsight(ctx context.Context, projectID, insightID uuid.UUID) error
 }
@@ -43,17 +45,20 @@ func (s *insightService) CreateInsight(ctx context.Context, projectID uuid.UUID,
 	return insight, nil
 }
 
-func (s *insightService) ListInsights(ctx context.Context, projectID uuid.UUID) ([]ProjectInsight, error) {
-	insights, err := s.repo.List(ctx, projectID)
+// ponytail: windows the full per-project list in memory (computed values only for the page); push LIMIT/OFFSET into SQL if projects hold thousands of insights.
+func (s *insightService) ListInsights(ctx context.Context, projectID uuid.UUID, p response.OffsetParams) ([]ProjectInsight, int64, error) {
+	all, err := s.repo.List(ctx, projectID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list insights: %w", err)
+		return nil, 0, fmt.Errorf("failed to list insights: %w", err)
 	}
+	total := int64(len(all))
+	insights := response.Window(all, p)
 
 	for i := range insights {
 		val, _ := s.repo.ComputeValue(ctx, projectID, insights[i].EventName, insights[i].Aggregation, insights[i].PropertyKey)
 		insights[i].ComputedValue = val
 	}
-	return insights, nil
+	return insights, total, nil
 }
 
 func (s *insightService) UpdateInsight(ctx context.Context, projectID, insightID uuid.UUID, req *UpdateInsightRequest) (*ProjectInsight, error) {

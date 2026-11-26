@@ -22,24 +22,45 @@ func NewHandler(service Service, logger *slog.Logger) *Handler {
 	}
 }
 
-// ListDeadLetters returns recent dead letter queue items and count summaries
+// ListDeadLetters returns dead letter items newest-first with cursor pagination and count summaries.
+// Legacy ?offset is still accepted (deprecated) when no cursor is given.
 func (h *Handler) ListDeadLetters(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 
-	limit, _ := strconv.Atoi(c.Query("limit", "50"))
-	offset, _ := strconv.Atoi(c.Query("offset", "0"))
-
-	items, summary, err := h.service.List(ctx, limit, offset)
+	params, err := response.ParseCursorParams(c, DefaultListLimit, MaxListLimit)
 	if err != nil {
+		return response.InvalidCursor(c)
+	}
+	q := ListQuery{Limit: params.Limit, Cursor: params.Cursor}
+	if q.Cursor == nil {
+		if off, convErr := strconv.Atoi(c.Query("offset")); convErr == nil && off > 0 {
+			if h.logger != nil {
+				h.logger.WarnContext(ctx, "deprecated query param 'offset' on /ops/dlq; use 'cursor'")
+			}
+			q.Offset = off
+		}
+	}
+
+	items, summary, hasMore, err := h.service.List(ctx, q)
+	if err != nil {
+		if errors.Is(err, response.ErrInvalidCursor) {
+			return response.InvalidCursor(c)
+		}
 		if h.logger != nil {
 			h.logger.ErrorContext(ctx, "failed to list dead letters", slog.String("error", err.Error()))
 		}
 		return response.Error(c, fiber.StatusInternalServerError, "DLQ_FETCH_FAILED", "Failed to retrieve dead-letter queue items")
 	}
 
+	var last *response.Cursor
+	if n := len(items); n > 0 {
+		last = &response.Cursor{T: items[n-1].FailedAt, ID: strconv.FormatInt(items[n-1].ID, 10)}
+	}
+	page := response.CursorPaginated(items, params.Limit, last, hasMore)
 	return response.Success(c, fiber.StatusOK, fiber.Map{
-		"items":   items,
-		"summary": summary,
+		"items":      page.Items,
+		"pagination": page.Pagination,
+		"summary":    summary,
 	})
 }
 

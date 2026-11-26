@@ -13,6 +13,17 @@ export interface KinetiqConfig {
   storageKey?: string;
   autoSyncOnOnline?: boolean;
   flushOnPageHide?: boolean;
+  /** Abort a hung ingest request after this many ms and requeue. Default 10000. */
+  requestTimeoutMs?: number;
+
+  /** Web autocapture of $pageview/$pageleave + $session_id. Default true in browsers. */
+  autocapture?: boolean;
+  /** Inactivity gap that starts a new session. Default 30 minutes. */
+  sessionTimeoutMs?: number;
+  /** When the browser sends Do Not Track, capture nothing. Default true. */
+  respectDoNotTrack?: boolean;
+  /** Start opted out (e.g. until consent is given); call optIn() later. */
+  optedOut?: boolean;
 }
 
 export type ClientConfig = KinetiqConfig;

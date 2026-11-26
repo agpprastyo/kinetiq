@@ -25,8 +25,8 @@ func (q *Queries) CountEventsByProject(ctx context.Context, projectID pgtype.UUI
 const getAnalyticsSummary = `-- name: GetAnalyticsSummary :one
 SELECT 
     COUNT(*)::bigint AS total_events,
-    COUNT(DISTINCT distinct_id)::bigint AS unique_distinct_ids
-FROM events
+    COUNT(DISTINCT person_key)::bigint AS unique_distinct_ids
+FROM resolved_events
 WHERE project_id = $1
   AND occurred_at >= $2
   AND occurred_at < $3
@@ -83,61 +83,6 @@ func (q *Queries) GetDailyVolume(ctx context.Context, arg GetDailyVolumeParams) 
 	for rows.Next() {
 		var i GetDailyVolumeRow
 		if err := rows.Scan(&i.Bucket, &i.Count); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getEventsForFunnel = `-- name: GetEventsForFunnel :many
-SELECT distinct_id, event_name, occurred_at, id
-FROM events
-WHERE project_id = $1
-  AND occurred_at >= $2
-  AND occurred_at < $3
-  AND distinct_id IS NOT NULL
-  AND event_name = ANY($4::text[])
-ORDER BY distinct_id, occurred_at ASC, id ASC
-`
-
-type GetEventsForFunnelParams struct {
-	ProjectID    pgtype.UUID
-	OccurredAt   pgtype.Timestamptz
-	OccurredAt_2 pgtype.Timestamptz
-	Column4      []string
-}
-
-type GetEventsForFunnelRow struct {
-	DistinctID pgtype.Text
-	EventName  string
-	OccurredAt pgtype.Timestamptz
-	ID         pgtype.UUID
-}
-
-func (q *Queries) GetEventsForFunnel(ctx context.Context, arg GetEventsForFunnelParams) ([]GetEventsForFunnelRow, error) {
-	rows, err := q.db.Query(ctx, getEventsForFunnel,
-		arg.ProjectID,
-		arg.OccurredAt,
-		arg.OccurredAt_2,
-		arg.Column4,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetEventsForFunnelRow
-	for rows.Next() {
-		var i GetEventsForFunnelRow
-		if err := rows.Scan(
-			&i.DistinctID,
-			&i.EventName,
-			&i.OccurredAt,
-			&i.ID,
-		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -2,7 +2,10 @@ name: E2E Smoke Test
 
 on:
   pull_request:
-    branches: [master, main]
+    branches: [master]
+
+permissions:
+  contents: read
 
 concurrency:
   group: e2e-smoke-${{ github.ref }}
@@ -15,7 +18,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -46,16 +49,19 @@ jobs:
       - name: Start Stack
         if: steps.filter.outputs.has_code_changes == 'true'
         run: |
-          docker compose -f docker-compose.e2e.yml up -d --build
-          sleep 30
+          docker compose -f docker-compose.e2e.yml up -d --build --wait --wait-timeout 180
 
       - name: Wait for API Health
         if: steps.filter.outputs.has_code_changes == 'true'
         run: |
           for i in $(seq 1 30); do
-            curl -fsS http://localhost:18080/healthz && break
+            if curl -fsS http://localhost:18080/healthz; then
+              exit 0
+            fi
             sleep 5
           done
+          echo "API failed to become healthy within timeout" >&2
+          exit 1
 
       - name: Run Smoke Test
         if: steps.filter.outputs.has_code_changes == 'true'

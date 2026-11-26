@@ -9,8 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+
+	"kinetiq/internal/webhook"
 )
 
 type DispatchPayload struct {
@@ -31,10 +34,25 @@ type Dispatcher struct {
 	client *http.Client
 }
 
+// NewDispatcher returns a dispatcher whose HTTP client refuses private/metadata
+// destinations at dial time and never follows redirects (SSRF guard).
 func NewDispatcher() *Dispatcher {
-	return &Dispatcher{
-		client: &http.Client{Timeout: 6 * time.Second},
+	return &Dispatcher{client: webhook.NewSafeHTTPClient(6 * time.Second)}
+}
+
+// NewDispatcherWithClient lets tests target loopback servers.
+func NewDispatcherWithClient(client *http.Client) *Dispatcher {
+	return &Dispatcher{client: client}
+}
+
+// IsDryRunURL reports documentation/dummy hosts that are never contacted.
+func IsDryRunURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
 	}
+	h := u.Hostname()
+	return h == "example.com" || strings.HasSuffix(h, ".example.com") || (h == "localhost" && u.Port() == "0")
 }
 
 func (d *Dispatcher) Dispatch(ctx context.Context, webhookURL, secret string, payload []byte) error {
@@ -72,7 +90,7 @@ func (d *Dispatcher) DispatchRule(ctx context.Context, rule AlertRule, payload D
 	}
 
 	// Dry run bypass for documentation/dummy URLs
-	if strings.Contains(rawURL, "example.com") || strings.Contains(rawURL, "localhost:0") {
+	if IsDryRunURL(rawURL) {
 		return nil
 	}
 

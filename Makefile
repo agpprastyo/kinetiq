@@ -89,7 +89,7 @@ test: test-unit test-component test-sdk test-web
 
 test-unit:
 	@echo "Running Unit Tests..."
-	@cd apps/api && go test -v ./internal/...
+	@cd apps/api && go test -v ./internal/... ./cmd/...
 
 test-component:
 	@echo "Running Component & Integration Tests..."

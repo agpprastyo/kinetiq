@@ -88,13 +88,14 @@ func (h *Handler) ListInsights(c *fiber.Ctx) error {
 		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Project not found")
 	}
 
-	insights, err := h.service.ListInsights(c.UserContext(), projectID)
+	params := response.ParseOffsetParams(c, false)
+	insights, total, err := h.service.ListInsights(c.UserContext(), projectID, params)
 	if err != nil {
 		h.logger.Error("failed to list insights", slog.String("error", err.Error()), slog.String("project_id", projectID.String()))
 		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list insights")
 	}
 
-	return response.Success(c, fiber.StatusOK, insights)
+	return response.Success(c, fiber.StatusOK, response.Paginated(insights, params, total))
 }
 
 // UpdateInsight updates an existing custom insight

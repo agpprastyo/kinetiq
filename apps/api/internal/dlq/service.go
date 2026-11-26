@@ -6,13 +6,22 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+
+	"kinetiq/internal/response"
 )
 
 const StreamKey = "events:stream"
+
+const (
+	DefaultListLimit = 50
+	MaxListLimit     = 200
+)
 
 var (
 	ErrNotFound = errors.New("dead letter record not found")
@@ -37,8 +46,15 @@ type DLQSummary struct {
 	ReplayedItems int64 `json:"replayed_items"`
 }
 
+// ListQuery pages newest-first. Cursor (keyset on failed_at,id) wins; Offset is the deprecated fallback.
+type ListQuery struct {
+	Limit  int
+	Cursor *response.Cursor
+	Offset int
+}
+
 type Service interface {
-	List(ctx context.Context, limit int, offset int) ([]DeadLetterItem, *DLQSummary, error)
+	List(ctx context.Context, q ListQuery) ([]DeadLetterItem, *DLQSummary, bool, error)
 	Replay(ctx context.Context, id int64) error
 	ReplayAll(ctx context.Context) (int, error)
 	Purge(ctx context.Context, id *int64) (int, error)
@@ -58,19 +74,17 @@ func NewService(pool *pgxpool.Pool, redisClient *redis.Client, logger *slog.Logg
 	}
 }
 
-func (s *DLQService) List(ctx context.Context, limit int, offset int) ([]DeadLetterItem, *DLQSummary, error) {
+func (s *DLQService) List(ctx context.Context, q ListQuery) ([]DeadLetterItem, *DLQSummary, bool, error) {
 	if s.pool == nil {
-		return []DeadLetterItem{}, &DLQSummary{}, nil
+		return []DeadLetterItem{}, &DLQSummary{}, false, nil
 	}
 
+	limit := q.Limit
 	if limit <= 0 {
-		limit = 50
+		limit = DefaultListLimit
 	}
-	if limit > 200 {
-		limit = 200
-	}
-	if offset < 0 {
-		offset = 0
+	if limit > MaxListLimit {
+		limit = MaxListLimit
 	}
 
 	// 1. Get summary counts
@@ -89,21 +103,38 @@ func (s *DLQService) List(ctx context.Context, limit int, offset int) ([]DeadLet
 		ReplayedItems: replayed,
 	}
 
-	// 2. Fetch records
-	rows, err := s.pool.Query(ctx, `
+	// 2. Fetch records (limit+1 to detect has_more)
+	const sel = `
 		SELECT d.id, d.project_id::text, p.name, d.event_id, d.reason,
 		       d.payload, d.attempts, d.status, d.failed_at, d.replayed_at
 		FROM event_dead_letters d
-		LEFT JOIN projects p ON p.id = d.project_id
-		ORDER BY d.failed_at DESC
-		LIMIT $1 OFFSET $2
-	`, limit, offset)
+		LEFT JOIN projects p ON p.id = d.project_id`
+	var rows pgx.Rows
+	var err error
+	if q.Cursor != nil {
+		id, convErr := strconv.ParseInt(q.Cursor.ID, 10, 64)
+		if convErr != nil {
+			return nil, summary, false, response.ErrInvalidCursor
+		}
+		rows, err = s.pool.Query(ctx, sel+`
+		WHERE (d.failed_at, d.id) < ($1, $2)
+		ORDER BY d.failed_at DESC, d.id DESC
+		LIMIT $3`, q.Cursor.T, id, limit+1)
+	} else {
+		offset := q.Offset
+		if offset < 0 {
+			offset = 0
+		}
+		rows, err = s.pool.Query(ctx, sel+`
+		ORDER BY d.failed_at DESC, d.id DESC
+		LIMIT $1 OFFSET $2`, limit+1, offset)
+	}
 	if err != nil {
-		return nil, summary, err
+		return nil, summary, false, err
 	}
 	defer rows.Close()
 
-	var items []DeadLetterItem
+	items := make([]DeadLetterItem, 0, limit+1)
 	for rows.Next() {
 		var item DeadLetterItem
 		var rawPayload []byte
@@ -117,11 +148,11 @@ func (s *DLQService) List(ctx context.Context, limit int, offset int) ([]DeadLet
 		items = append(items, item)
 	}
 
-	if items == nil {
-		items = []DeadLetterItem{}
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
 	}
-
-	return items, summary, nil
+	return items, summary, hasMore, nil
 }
 
 func (s *DLQService) Replay(ctx context.Context, id int64) error {

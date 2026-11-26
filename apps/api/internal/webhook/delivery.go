@@ -56,14 +56,7 @@ type Dispatcher struct {
 func NewDispatcher(cfg DeliveryConfig) *Dispatcher {
 	return &Dispatcher{
 		config: cfg,
-		client: &http.Client{
-			Timeout: cfg.Timeout,
-			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
-			},
-		},
+		client: NewSafeHTTPClient(cfg.Timeout),
 	}
 }
 

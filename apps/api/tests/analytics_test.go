@@ -26,7 +26,7 @@ func TestAnalyticsSeam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create container: %v", err)
 	}
-	server := app.SetupWithContainer(container)
+	server := app.SetupWithContainer(withFakeAuth(container))
 	queries := db.New(container.DBPool)
 
 	// User 1 project
@@ -128,7 +128,7 @@ func TestAnalyticsSeam(t *testing.T) {
 			TotalEvents       int64  `json:"total_events"`
 			UniqueDistinctIds int64  `json:"unique_distinct_ids"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		if err := decodeData(resp.Body, &body); err != nil {
 			t.Fatalf("failed to decode response: %v", err)
 		}
 
@@ -158,7 +158,7 @@ func TestAnalyticsSeam(t *testing.T) {
 				Count     int64  `json:"count"`
 			} `json:"items"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		if err := decodeData(resp.Body, &body); err != nil {
 			t.Fatalf("failed to decode response: %v", err)
 		}
 
@@ -190,7 +190,7 @@ func TestAnalyticsSeam(t *testing.T) {
 				Count     int64  `json:"count"`
 			} `json:"points"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		if err := decodeData(resp.Body, &body); err != nil {
 			t.Fatalf("failed to decode response: %v", err)
 		}
 
@@ -225,7 +225,7 @@ func TestAnalyticsSeam(t *testing.T) {
 				ConversionRate float64 `json:"conversion_rate"`
 			} `json:"steps"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		if err := decodeData(resp.Body, &body); err != nil {
 			t.Fatalf("failed to decode funnel response: %v", err)
 		}
 
@@ -302,20 +302,26 @@ func TestAnalyticsSeam(t *testing.T) {
 
 		var usersBody struct {
 			Success bool `json:"success"`
-			Data    []struct {
-				DistinctID  string `json:"distinct_id"`
-				TotalEvents int64  `json:"total_events"`
+			Data    struct {
+				Items []struct {
+					DistinctID  string `json:"distinct_id"`
+					TotalEvents int64  `json:"total_events"`
+				} `json:"items"`
+				Pagination struct {
+					Limit int   `json:"limit"`
+					Total int64 `json:"total"`
+				} `json:"pagination"`
 			} `json:"data"`
 		}
 		if err := json.NewDecoder(respUsers.Body).Decode(&usersBody); err != nil {
 			t.Fatalf("failed to decode users response: %v", err)
 		}
-		if len(usersBody.Data) == 0 {
-			t.Errorf("expected at least 1 user, got 0")
+		if len(usersBody.Data.Items) == 0 || usersBody.Data.Pagination.Total < 1 || usersBody.Data.Pagination.Limit != 10 {
+			t.Fatalf("expected users + pagination meta, got %+v", usersBody.Data)
 		}
 
 		// 3. User timeline
-		firstUser := usersBody.Data[0].DistinctID
+		firstUser := usersBody.Data.Items[0].DistinctID
 		reqTimeline := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/projects/%s/analytics/users/%s/timeline?limit=50", projectID1.String(), firstUser), nil)
 		reqTimeline.Header.Set("Cookie", user1Cookie)
 		respTimeline, err := server.Test(reqTimeline)
@@ -325,16 +331,33 @@ func TestAnalyticsSeam(t *testing.T) {
 
 		var timelineBody struct {
 			Success bool `json:"success"`
-			Data    []struct {
-				EventID   string `json:"event_id"`
-				EventName string `json:"event_name"`
+			Data    struct {
+				Items []struct {
+					EventID   string `json:"event_id"`
+					EventName string `json:"event_name"`
+				} `json:"items"`
+				Pagination struct {
+					NextCursor *string `json:"next_cursor"`
+					HasMore    bool    `json:"has_more"`
+				} `json:"pagination"`
 			} `json:"data"`
 		}
 		if err := json.NewDecoder(respTimeline.Body).Decode(&timelineBody); err != nil {
 			t.Fatalf("failed to decode timeline response: %v", err)
 		}
-		if len(timelineBody.Data) == 0 {
+		if len(timelineBody.Data.Items) == 0 {
 			t.Errorf("expected at least 1 timeline event for user %s, got 0", firstUser)
+		}
+		if !timelineBody.Data.Pagination.HasMore && timelineBody.Data.Pagination.NextCursor != nil {
+			t.Errorf("last page must have next_cursor null")
+		}
+
+		// 4. Malformed cursor -> 400 INVALID_CURSOR
+		reqBadCursor := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/projects/%s/analytics/users/%s/timeline?cursor=%%25bad", projectID1.String(), firstUser), nil)
+		reqBadCursor.Header.Set("Cookie", user1Cookie)
+		respBadCursor, _ := server.Test(reqBadCursor)
+		if respBadCursor.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400 for malformed cursor, got %d", respBadCursor.StatusCode)
 		}
 	})
 }

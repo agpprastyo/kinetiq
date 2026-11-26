@@ -26,7 +26,7 @@ func TestEndToEndGoldenFlowAndEdgeCases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create container: %v", err)
 	}
-	server := app.SetupWithContainer(container)
+	server := app.SetupWithContainer(withFakeAuth(container))
 
 	userCookie := "user1_session_cookie"
 
@@ -159,7 +159,7 @@ func TestEndToEndGoldenFlowAndEdgeCases(t *testing.T) {
 			TotalEvents       int64 `json:"total_events"`
 			UniqueDistinctIds int64 `json:"unique_distinct_ids"`
 		}
-		if err := json.NewDecoder(respSummary.Body).Decode(&summaryData); err != nil {
+		if err := decodeData(respSummary.Body, &summaryData); err != nil {
 			t.Fatalf("failed to decode summary: %v", err)
 		}
 
@@ -188,7 +188,7 @@ func TestEndToEndGoldenFlowAndEdgeCases(t *testing.T) {
 				Count     int64  `json:"count"`
 			} `json:"items"`
 		}
-		if err := json.NewDecoder(respTop.Body).Decode(&topData); err != nil {
+		if err := decodeData(respTop.Body, &topData); err != nil {
 			t.Fatalf("failed to decode top events: %v", err)
 		}
 
@@ -308,7 +308,7 @@ func TestEndToEndGoldenFlowAndEdgeCases(t *testing.T) {
 		var summary struct {
 			TotalEvents int64 `json:"total_events"`
 		}
-		json.NewDecoder(respQuery.Body).Decode(&summary)
+		decodeData(respQuery.Body, &summary)
 
 		// b_evt_from and b_evt_mid should be included (2 events). b_evt_to must be excluded.
 		if summary.TotalEvents != 2 {

@@ -22,7 +22,12 @@ spec:
           image: {{ include "kinetiq.image" (dict "root" . "name" "api") }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/app/kinetiq-worker"]
+          ports:
+            - name: health
+              containerPort: 8081
           {{- include "kinetiq.backendEnv" . | nindent 10 }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: health }
           resources: {{- toYaml .Values.worker.resources | nindent 12 }}
 ---
 {{ include "kinetiq.pdb" (dict "root" . "component" "worker" "values" .Values.worker) }}
