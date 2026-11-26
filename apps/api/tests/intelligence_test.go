@@ -156,7 +156,7 @@ func TestIntelligenceSeam(t *testing.T) {
 	})
 
 	t.Run("API HTTP Endpoints for Intelligence", func(t *testing.T) {
-		server := app.SetupWithContainer(container)
+		server := app.SetupWithContainer(withFakeAuth(container))
 		userCookie := "user1_session_cookie"
 
 		// Mock project ownership for user-1-id
@@ -201,19 +201,31 @@ func TestIntelligenceSeam(t *testing.T) {
 			t.Fatalf("expected 200 OK, got %d", respAnomaly.StatusCode)
 		}
 
-		// POST /api/v1/intelligence/dispatch-digests
-		reqDispatch := httptest.NewRequest(
-			http.MethodPost,
-			"/api/v1/intelligence/dispatch-digests",
-			nil,
-		)
-		reqDispatch.Header.Set("Cookie", userCookie)
-		respDispatch, err := server.Test(reqDispatch, 5000)
-		if err != nil {
-			t.Fatalf("dispatch request error: %v", err)
+		// Digest dispatch is ops-only: tenant user -> 403, ops staff -> 200
+		dispatch := func(cookie string) int {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/ops/intelligence/dispatch-digests", nil)
+			req.Header.Set("Cookie", cookie)
+			resp, err := server.Test(req, 5000)
+			if err != nil {
+				t.Fatalf("dispatch request error: %v", err)
+			}
+			return resp.StatusCode
 		}
-		if respDispatch.StatusCode != http.StatusOK {
-			t.Fatalf("expected 200 OK for dispatch digests, got %d", respDispatch.StatusCode)
+		if code := dispatch(userCookie); code != http.StatusForbidden {
+			t.Fatalf("expected 403 for tenant dispatch, got %d", code)
+		}
+		if code := dispatch("ops_session_cookie"); code != http.StatusOK {
+			t.Fatalf("expected 200 for ops dispatch, got %d", code)
+		}
+
+		legacy := httptest.NewRequest(http.MethodPost, "/api/v1/intelligence/dispatch-digests", nil)
+		legacy.Header.Set("Cookie", userCookie)
+		respLegacy, err := server.Test(legacy, 5000)
+		if err != nil {
+			t.Fatalf("legacy dispatch request error: %v", err)
+		}
+		if respLegacy.StatusCode == http.StatusOK {
+			t.Fatalf("legacy tenant dispatch route must be removed")
 		}
 	})
 

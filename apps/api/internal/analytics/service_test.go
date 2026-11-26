@@ -8,12 +8,13 @@ import (
 	"github.com/google/uuid"
 
 	"kinetiq/internal/analytics"
+	"kinetiq/internal/response"
 )
 
 type mockAnalyticsService struct {
 	analytics.Service
-	listUsersFunc       func(ctx context.Context, projectID uuid.UUID, search string, limit, offset int) ([]analytics.UserExplorerItem, error)
-	getUserTimelineFunc func(ctx context.Context, projectID uuid.UUID, distinctID string, limit int, before *time.Time) ([]analytics.UserTimelineItem, error)
+	listUsersFunc       func(ctx context.Context, projectID uuid.UUID, search string, limit, offset int) ([]analytics.UserExplorerItem, int64, error)
+	getUserTimelineFunc func(ctx context.Context, projectID uuid.UUID, distinctID string, limit int, cursor *response.Cursor, before *time.Time) ([]analytics.UserTimelineItem, bool, error)
 	getDeviceBreakFunc  func(ctx context.Context, projectID uuid.UUID, from, to time.Time) ([]analytics.DeviceBreakdownItem, error)
 	getGeoBreakFunc     func(ctx context.Context, projectID uuid.UUID, from, to time.Time, limit int) ([]analytics.GeoBreakdownItem, error)
 }
@@ -32,23 +33,23 @@ func (m *mockAnalyticsService) GetGeoBreakdown(ctx context.Context, projectID uu
 	return nil, nil
 }
 
-func (m *mockAnalyticsService) ListUsers(ctx context.Context, projectID uuid.UUID, search string, limit, offset int) ([]analytics.UserExplorerItem, error) {
+func (m *mockAnalyticsService) ListUsers(ctx context.Context, projectID uuid.UUID, search string, limit, offset int) ([]analytics.UserExplorerItem, int64, error) {
 	if m.listUsersFunc != nil {
 		return m.listUsersFunc(ctx, projectID, search, limit, offset)
 	}
-	return nil, nil
+	return nil, 0, nil
 }
 
-func (m *mockAnalyticsService) GetUserTimeline(ctx context.Context, projectID uuid.UUID, distinctID string, limit int, before *time.Time) ([]analytics.UserTimelineItem, error) {
+func (m *mockAnalyticsService) GetUserTimeline(ctx context.Context, projectID uuid.UUID, distinctID string, limit int, cursor *response.Cursor, before *time.Time) ([]analytics.UserTimelineItem, bool, error) {
 	if m.getUserTimelineFunc != nil {
-		return m.getUserTimelineFunc(ctx, projectID, distinctID, limit, before)
+		return m.getUserTimelineFunc(ctx, projectID, distinctID, limit, cursor, before)
 	}
-	return nil, nil
+	return nil, false, nil
 }
 
 func TestAnalytics_ListUsers_Unit(t *testing.T) {
 	mockSvc := &mockAnalyticsService{
-		listUsersFunc: func(ctx context.Context, pID uuid.UUID, search string, limit, offset int) ([]analytics.UserExplorerItem, error) {
+		listUsersFunc: func(ctx context.Context, pID uuid.UUID, search string, limit, offset int) ([]analytics.UserExplorerItem, int64, error) {
 			if search == "user-123" {
 				return []analytics.UserExplorerItem{
 					{
@@ -57,16 +58,16 @@ func TestAnalytics_ListUsers_Unit(t *testing.T) {
 						FirstSeen:   time.Now().Add(-48 * time.Hour),
 						LastActive:  time.Now(),
 					},
-				}, nil
+				}, 1, nil
 			}
-			return []analytics.UserExplorerItem{}, nil
+			return []analytics.UserExplorerItem{}, 0, nil
 		},
 	}
 
 	cached := analytics.NewCachedAnalyticsService(mockSvc, nil, nil)
 	projectID := uuid.New()
 
-	users, err := cached.ListUsers(context.Background(), projectID, "user-123", 10, 0)
+	users, _, err := cached.ListUsers(context.Background(), projectID, "user-123", 10, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -84,7 +85,7 @@ func TestAnalytics_ListUsers_Unit(t *testing.T) {
 func TestAnalytics_UserTimeline_Unit(t *testing.T) {
 	now := time.Now().UTC()
 	mockSvc := &mockAnalyticsService{
-		getUserTimelineFunc: func(ctx context.Context, pID uuid.UUID, distinctID string, limit int, before *time.Time) ([]analytics.UserTimelineItem, error) {
+		getUserTimelineFunc: func(ctx context.Context, pID uuid.UUID, distinctID string, limit int, cursor *response.Cursor, before *time.Time) ([]analytics.UserTimelineItem, bool, error) {
 			return []analytics.UserTimelineItem{
 				{
 					EventID:    "evt-1",
@@ -98,14 +99,14 @@ func TestAnalytics_UserTimeline_Unit(t *testing.T) {
 					OccurredAt: now.Add(-10 * time.Minute),
 					Properties: map[string]interface{}{"item_id": "item-99"},
 				},
-			}, nil
+			}, false, nil
 		},
 	}
 
 	cached := analytics.NewCachedAnalyticsService(mockSvc, nil, nil)
 	projectID := uuid.New()
 
-	timeline, err := cached.GetUserTimeline(context.Background(), projectID, "user-123", 50, nil)
+	timeline, _, err := cached.GetUserTimeline(context.Background(), projectID, "user-123", 50, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

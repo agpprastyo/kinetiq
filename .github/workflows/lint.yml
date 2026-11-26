@@ -2,10 +2,12 @@ name: Lint & Typecheck
 
 on:
   push:
-
-    branches: [master, main]
+    branches: [master]
   pull_request:
-    branches: [master, main]
+    branches: [master]
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,9 +17,10 @@ jobs:
   lint:
     name: Lint & Static Analysis
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -27,7 +30,7 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
           else
-            CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "apps/api/all")
+            CHANGED=$(git diff --name-only "${{ github.event.before }}...${{ github.sha }}" 2>/dev/null || echo "apps/api/all")
           fi
           
           CODE_CHANGED=$(echo "$CHANGED" | grep -vE '(\.md$|(^docs/|^apps/docs/)|^\.github/pull_request_template\.md|^\.gitignore$)' || true)
@@ -42,7 +45,7 @@ jobs:
 
       - name: Setup Go
         if: steps.filter.outputs.has_code_changes == 'true'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: apps/api/go.mod
           cache: true

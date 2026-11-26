@@ -3,6 +3,7 @@ docs:
       - any-glob-to-any-file:
           - '**/*.md'
           - 'docs/**'
+          - 'apps/docs/**'
           - '.github/pull_request_template.md'
 
 ci:
@@ -11,14 +12,44 @@ ci:
           - '.github/**'
           - 'Makefile'
 
+scripts:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'scripts/**'
+
 feat:
   - changed-files:
       - any-glob-to-any-file:
           - 'apps/**'
+          - '!apps/docs/**'
           - 'packages/**'
-          - 'internal/**'
-          - 'cmd/**'
           - 'migrations/**'
+
+area/api:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'apps/api/**'
+
+area/auth:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'apps/auth/**'
+
+area/web:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'apps/web/**'
+
+area/sdk:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'packages/sdk/**'
+
+area/docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'apps/docs/**'
+          - 'docs/**'
 
 tests:
   - changed-files:

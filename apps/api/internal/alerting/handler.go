@@ -2,6 +2,7 @@ package alerting
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 
 	"kinetiq/internal/project"
 	"kinetiq/internal/response"
+	"kinetiq/internal/webhook"
 )
 
 type CreateRuleRequest struct {
@@ -68,7 +70,7 @@ func (h *Handler) ListRules(c *fiber.Ctx) error {
 		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Failed to retrieve alert rules")
 	}
 
-	return response.Success(c, fiber.StatusOK, rules)
+	return response.Success(c, fiber.StatusOK, response.PaginateSlice(rules, response.ParseOffsetParams(c, false)))
 }
 
 // CreateRule registers a new alert notification rule
@@ -120,6 +122,10 @@ func (h *Handler) CreateRule(c *fiber.Ctx) error {
 	isActive := true
 	if req.IsActive != nil {
 		isActive = *req.IsActive
+	}
+
+	if err := validateDestination(channel, req.WebhookURL); err != nil {
+		return response.Error(c, fiber.StatusBadRequest, "UNSAFE_WEBHOOK_URL", err.Error())
 	}
 
 	rule := AlertRule{
@@ -209,6 +215,11 @@ func (h *Handler) UpdateRule(c *fiber.Ctx) error {
 	}
 	if req.IsActive != nil {
 		existing.IsActive = *req.IsActive
+	}
+	if req.WebhookURL != "" || req.ChannelType != "" {
+		if err := validateDestination(existing.ChannelType, existing.WebhookURL); err != nil {
+			return response.Error(c, fiber.StatusBadRequest, "UNSAFE_WEBHOOK_URL", err.Error())
+		}
 	}
 	if req.CooldownMinutes > 0 {
 		existing.CooldownMinutes = req.CooldownMinutes
@@ -334,4 +345,23 @@ func isValidChannel(channel string) bool {
 	default:
 		return false
 	}
+}
+
+// validateDestination rejects webhook targets that resolve to private/metadata
+// addresses. Telegram bot tokens (non-URL) are sent to api.telegram.org.
+func validateDestination(channel, rawURL string) error {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return errors.New("webhook_url is required")
+	}
+	if channel == "telegram" && !strings.HasPrefix(rawURL, "http") {
+		return nil
+	}
+	if IsDryRunURL(rawURL) {
+		return nil
+	}
+	if err := webhook.IsSafeTargetURL(rawURL); err != nil {
+		return fmt.Errorf("webhook_url rejected: %w", err)
+	}
+	return nil
 }

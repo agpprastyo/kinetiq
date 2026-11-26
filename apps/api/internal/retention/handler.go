@@ -38,7 +38,7 @@ func (h *Handler) authorize(c *fiber.Ctx, write bool) (uuid.UUID, bool, error) {
 	}
 	projectID, err := uuid.Parse(strings.TrimSpace(c.Params("projectID")))
 	if err != nil {
-		return uuid.Nil, false, response.Error(c, fiber.StatusBadRequest, "INVALID_PROJECT_ID", "Invalid project ID")
+		return uuid.Nil, false, response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Project not found")
 	}
 	role := ""
 	if h.access != nil {

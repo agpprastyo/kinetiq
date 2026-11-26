@@ -28,7 +28,7 @@ func TestProjectInsightsSeam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create container: %v", err)
 	}
-	server := app.SetupWithContainer(container)
+	server := app.SetupWithContainer(withFakeAuth(container))
 	queries := db.New(container.DBPool)
 
 	userCookie := "user1_session_cookie"
@@ -120,23 +120,25 @@ func TestProjectInsightsSeam(t *testing.T) {
 
 		var wrapper struct {
 			Success bool `json:"success"`
-			Data    []struct {
-				ID            string  `json:"id"`
-				Title         string  `json:"title"`
-				ComputedValue float64 `json:"computed_value"`
+			Data    struct {
+				Items []struct {
+					ID            string  `json:"id"`
+					Title         string  `json:"title"`
+					ComputedValue float64 `json:"computed_value"`
+				} `json:"items"`
 			} `json:"data"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
 			t.Fatalf("failed to decode response: %v", err)
 		}
 
-		if len(wrapper.Data) == 0 {
+		if len(wrapper.Data.Items) == 0 {
 			t.Fatalf("expected at least 1 insight in list")
 		}
 
 		// 5 checkouts seeded
-		if wrapper.Data[0].ComputedValue != 5.0 {
-			t.Errorf("expected computed count 5.0, got %.2f", wrapper.Data[0].ComputedValue)
+		if wrapper.Data.Items[0].ComputedValue != 5.0 {
+			t.Errorf("expected computed count 5.0, got %.2f", wrapper.Data.Items[0].ComputedValue)
 		}
 	})
 

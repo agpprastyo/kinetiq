@@ -28,8 +28,10 @@ spec:
               value: {{ .Values.auth.port | quote }}
             - name: WEB_ORIGIN
               value: {{ .Values.config.WEB_ORIGIN | quote }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: {{ .Values.auth.port }} }
           readinessProbe:
-            tcpSocket: { port: {{ .Values.auth.port }} }
+            httpGet: { path: /readyz, port: {{ .Values.auth.port }} }
           resources: {{- toYaml .Values.auth.resources | nindent 12 }}
 ---
 apiVersion: v1

@@ -43,6 +43,8 @@
   let timeline = $state<UserTimelineItem[]>([]);
   let timelineLoading = $state(false);
   let timelineError = $state("");
+  let timelineNextCursor = $state<string | null>(null);
+  let timelineLoadingMore = $state(false);
   let expandedTimelineEvents = $state<Record<string, boolean>>({});
 
   onMount(async () => {
@@ -81,12 +83,15 @@
   async function selectUser(user: UserExplorerItem) {
     selectedUser = user;
     timeline = [];
+    timelineNextCursor = null;
     expandedTimelineEvents = {};
     timelineLoading = true;
     timelineError = "";
 
     try {
-      timeline = await api.getUserTimeline(projectId, user.distinct_id, 100);
+      const res = await api.getUserTimeline(projectId, user.distinct_id, 100);
+      timeline = res.items ?? [];
+      timelineNextCursor = res.pagination?.next_cursor ?? null;
     } catch (err: any) {
       timelineError = err.message || "Failed to load user activity timeline";
     } finally {
@@ -94,8 +99,23 @@
     }
   }
 
+  async function loadMoreTimeline() {
+    if (!selectedUser || !timelineNextCursor || timelineLoadingMore) return;
+    timelineLoadingMore = true;
+    try {
+      const res = await api.getUserTimeline(projectId, selectedUser.distinct_id, 100, timelineNextCursor);
+      timeline = [...timeline, ...(res.items ?? [])];
+      timelineNextCursor = res.pagination?.next_cursor ?? null;
+    } catch (err: any) {
+      timelineError = err.message || "Failed to load more events";
+    } finally {
+      timelineLoadingMore = false;
+    }
+  }
+
   function closeDrawer() {
     selectedUser = null;
+    timelineNextCursor = null;
     timeline = [];
     expandedTimelineEvents = {};
   }
@@ -382,12 +402,19 @@
               </div>
             {/each}
           </div>
+          {#if timelineNextCursor}
+            <div class="pt-4 flex justify-center">
+              <Button variant="secondary" size="sm" onclick={loadMoreTimeline} disabled={timelineLoadingMore}>
+                {timelineLoadingMore ? "Loading..." : "Load more"}
+              </Button>
+            </div>
+          {/if}
         {/if}
       </div>
 
       <!-- Drawer Footer -->
       <div class="p-4 border-t border-[var(--border-subtle)] bg-[var(--bg-surface-muted)]/40 flex justify-between items-center text-xs text-[var(--text-muted)]">
-        <span>Showing latest {timeline.length} events</span>
+        <span>Showing {timeline.length} events{timelineNextCursor ? "+" : ""}</span>
         <Button variant="secondary" size="sm" onclick={closeDrawer}>Done</Button>
       </div>
     </div>

@@ -182,6 +182,16 @@ export const auth = betterAuth({
       defaultRole: "owner",
     }),
   ],
+  // ponytail: in-memory store is per instance; switch storage to "database"/secondaryStorage when auth scales horizontally.
+  rateLimit: {
+    enabled: process.env.NODE_ENV === "production" || process.env.AUTH_RATE_LIMIT === "true",
+    window: 60,
+    max: 100,
+    customRules: {
+      "/sign-in/email": { window: 60, max: 5 },
+      "/sign-up/email": { window: 60, max: 3 },
+    },
+  },
   secret: process.env.BETTER_AUTH_SECRET || "test-secret-at-least-32-characters-long",
   baseURL: process.env.AUTH_BASE_URL || "http://localhost:3001",
   trustedOrigins: [

@@ -3,7 +3,6 @@ package compliance
 import (
 	"context"
 	"log/slog"
-	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -65,20 +64,7 @@ func (h *Handler) ListWorkspaceAuditLogs(c *fiber.Ctx) error {
 		}
 	}
 
-	limit := 50
-	if l := c.Query("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	}
-
-	page := 1
-	if p := c.Query("page"); p != "" {
-		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
-			page = parsed
-		}
-	}
-	offset := (page - 1) * limit
+	params := response.ParseOffsetParams(c, false)
 
 	var projectID *uuid.UUID
 	if pIDStr := strings.TrimSpace(c.Query("project_id")); pIDStr != "" {
@@ -97,8 +83,8 @@ func (h *Handler) ListWorkspaceAuditLogs(c *fiber.Ctx) error {
 		Action:      action,
 		TargetType:  targetType,
 		Search:      search,
-		Limit:       limit,
-		Offset:      offset,
+		Limit:       params.Limit,
+		Offset:      params.Offset,
 	})
 	if err != nil {
 		if h.logger != nil {
@@ -107,7 +93,7 @@ func (h *Handler) ListWorkspaceAuditLogs(c *fiber.Ctx) error {
 		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error")
 	}
 
-	return response.Success(c, fiber.StatusOK, res)
+	return response.Success(c, fiber.StatusOK, response.Paginated(res.Items, params, res.Total))
 }
 
 // DeleteUserData godoc
@@ -126,7 +112,7 @@ func (h *Handler) DeleteUserData(c *fiber.Ctx) error {
 	projectIDStr := strings.TrimSpace(c.Params("projectID"))
 	projectID, err := uuid.Parse(projectIDStr)
 	if err != nil {
-		return response.Error(c, fiber.StatusBadRequest, "INVALID_PROJECT_ID", "Invalid project ID")
+		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Project not found")
 	}
 
 	distinctID := strings.TrimSpace(c.Params("distinctID"))

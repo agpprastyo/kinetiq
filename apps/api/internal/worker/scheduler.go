@@ -3,20 +3,24 @@ package worker
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"kinetiq/internal/intelligence"
 )
 
 // StartIntelligenceSchedulers starts background cron routines for anomaly sweeps and weekly digests
-func StartIntelligenceSchedulers(ctx context.Context, intelSvc intelligence.Service, logger *slog.Logger) {
+func StartIntelligenceSchedulers(ctx context.Context, intelSvc intelligence.Service, logger *slog.Logger) *sync.WaitGroup {
+	wg := &sync.WaitGroup{}
 	if intelSvc == nil {
-		return
+		return wg
 	}
+	wg.Add(2)
 
 	// 1. Hourly anomaly detection sweep across active alert rules
 	anomalyTicker := time.NewTicker(30 * time.Minute)
 	go func() {
+		defer wg.Done()
 		defer anomalyTicker.Stop()
 		for {
 			select {
@@ -36,6 +40,7 @@ func StartIntelligenceSchedulers(ctx context.Context, intelSvc intelligence.Serv
 	// 2. Periodic check for weekly digest dispatch (runs daily, checks if Monday UTC)
 	digestTicker := time.NewTicker(6 * time.Hour)
 	go func() {
+		defer wg.Done()
 		defer digestTicker.Stop()
 		for {
 			select {
@@ -54,4 +59,5 @@ func StartIntelligenceSchedulers(ctx context.Context, intelSvc intelligence.Serv
 			}
 		}
 	}()
+	return wg
 }

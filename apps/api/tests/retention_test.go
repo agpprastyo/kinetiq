@@ -27,7 +27,7 @@ func TestRetentionCohortSeam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create container: %v", err)
 	}
-	server := app.SetupWithContainer(container)
+	server := app.SetupWithContainer(withFakeAuth(container))
 	queries := db.New(container.DBPool)
 
 	// Create test project

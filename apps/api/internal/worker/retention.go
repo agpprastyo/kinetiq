@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,9 +27,12 @@ func PurgeExpiredEvents(ctx context.Context, pool *pgxpool.Pool, retentionDays i
 }
 
 // StartRetentionSweeper runs periodic purge in background
-func StartRetentionSweeper(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, interval time.Duration, retentionDays int) {
+func StartRetentionSweeper(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, interval time.Duration, retentionDays int) *sync.WaitGroup {
 	ticker := time.NewTicker(interval)
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		defer ticker.Stop()
 		for {
 			select {
@@ -44,4 +48,5 @@ func StartRetentionSweeper(ctx context.Context, pool *pgxpool.Pool, logger *slog
 			}
 		}
 	}()
+	return wg
 }

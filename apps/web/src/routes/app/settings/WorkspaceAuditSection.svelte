@@ -65,7 +65,7 @@
         limit
       );
       auditLogs = res.items || [];
-      total = res.total || 0;
+      total = res.pagination?.total ?? 0;
     } catch (err: any) {
       error = err.message || "Unable to fetch workspace audit logs.";
     } finally {

@@ -24,6 +24,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **First-Run Setup Wizard (#144, PR #167)**: `/setup` stepper UI and Auth endpoints `GET /api/v1/setup/status`, `POST /api/v1/setup` (locked with `403` once any user exists).
 - **`kinetiq doctor` Diagnostics (#146, PR #163)**: env, RAM/disk, container engine, ports, PostgreSQL/TimescaleDB/migrations, Redis stream, Auth health, and TLS expiry checks with `PASS`/`WARN`/`FAIL`, remediation hints, and `--json`.
 
+### Changed
+- **Standardized pagination (#182) — BREAKING response shape**:
+  - Offset (`?page=1&limit=20`, max 100) returning `{ items, pagination: { page, limit, total, total_pages } }` for `GET /projects`, `/projects/:id/keys`, `/projects/:id/alerts`, `/projects/:id/insights`, `/billing/transactions`, `/projects/:id/analytics/users`, `/workspace/audit-logs`, `/ops/tenants`, `/ops/audit-logs`. Endpoints that returned bare arrays (or `{tenants|logs, count}`) now return `{ items, pagination }`.
+  - Cursor (`?cursor=&limit=50`, max 200) returning `{ items, pagination: { limit, next_cursor, has_more } }` for user timeline and `/ops/dlq` (keyset on `(timestamp, id)`; malformed cursor -> `400 INVALID_CURSOR`; DLQ keeps `summary`).
+  - Deprecated, still accepted for one release: `?offset=` (analytics users, `/ops/tenants`, `/ops/audit-logs`, `/ops/dlq`) and timeline `?before=`.
+  - Web UI updated (timeline/DLQ "Load more"). See docs `api-reference/pagination`.
+
 ### Security
 - Retention and GDPR deletion endpoints enforce project ownership (owner/admin) and return `404` for inaccessible projects (PR #165).
 

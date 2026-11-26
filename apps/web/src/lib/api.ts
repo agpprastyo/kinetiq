@@ -1,3 +1,6 @@
+import { loginUrl } from "./redirect";
+import { extrasToQuery, type QueryExtras } from "./filters";
+import { funnelOptionsToQuery, type FunnelOptions } from "./funnel";
 export const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080/api/v1";
 
 export interface Project {
@@ -86,6 +89,25 @@ export interface CreateProjectResponse {
 export interface SummaryData {
   total_events: number;
   unique_distinct_ids: number;
+  breakdown?: { value: string; count: number }[];
+}
+
+export interface CatalogEvent {
+  event_name: string;
+  count: number;
+  last_seen: string;
+}
+
+export interface CatalogProperty {
+  name: string;
+  scope: "event" | "person";
+  type: string;
+  count: number;
+}
+
+export interface CatalogValue {
+  value: string;
+  count: number;
 }
 
 export interface TopEventItem {
@@ -112,10 +134,31 @@ export interface FunnelStep {
   event_name: string;
   count: number;
   conversion_rate: number;
+  median_time_to_convert_seconds?: number | null;
 }
 
 export interface FunnelData {
   steps: FunnelStep[];
+  window_seconds?: number;
+  order?: string;
+  breakdown?: { value: string; steps: FunnelStep[] }[];
+}
+
+export interface FunnelDropoffUser {
+  person_key: string;
+  distinct_id: string;
+  entered_at: string;
+  reached_at: string;
+}
+
+export interface FunnelDropoffData {
+  step: number;
+  event_name: string;
+  next_event_name: string;
+  total: number;
+  limit: number;
+  offset: number;
+  items: FunnelDropoffUser[];
 }
 
 export interface BreakdownItem {
@@ -188,6 +231,38 @@ export function toSafeUserMessage(err: unknown, fallback = "Unable to complete y
   return fallback;
 }
 
+export interface OffsetPagination {
+  page: number;
+  limit: number;
+  total: number;
+  total_pages: number;
+}
+
+export interface OffsetPage<T> {
+  items: T[];
+  pagination: OffsetPagination;
+}
+
+export interface CursorPagination {
+  limit: number;
+  next_cursor: string | null;
+  has_more: boolean;
+}
+
+export interface CursorPage<T> {
+  items: T[];
+  pagination: CursorPagination;
+}
+
+/** Accepts the {items, pagination} envelope or a legacy bare array. */
+export function itemsOf<T>(data: OffsetPage<T> | CursorPage<T> | T[] | null | undefined): T[] {
+  if (Array.isArray(data)) return data;
+  return data?.items ?? [];
+}
+
+// ponytail: CRUD lists fetch one max-size page (100) and expose items only; add page controls when a list can exceed 100.
+const MAX_PAGE = 100;
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE_URL}${path}`;
   const headers = new Headers(options.headers || {});
@@ -216,6 +291,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     data = await res.json().catch(() => null);
   }
 
+  if (res.status === 401 && typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
+    location.assign(loginUrl(location.pathname, location.search));
+  }
+
   if (!res.ok) {
     const errorCode = data?.error?.code;
     const rawMsg = data?.error?.message || data?.message;
@@ -231,7 +310,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export const api = {
   getProjects: (signal?: AbortSignal) =>
-    request<Project[]>("/projects", { signal }),
+    request<OffsetPage<Project> | Project[]>(`/projects?limit=${MAX_PAGE}`, { signal }).then(itemsOf),
 
   getProject: (id: string, signal?: AbortSignal) =>
     request<Project>(`/projects/${id}`, { signal }),
@@ -264,7 +343,7 @@ export const api = {
     }),
 
   listApiKeys: (projectId: string, signal?: AbortSignal) =>
-    request<ProjectApiKey[]>(`/projects/${projectId}/keys`, { signal }),
+    request<OffsetPage<ProjectApiKey> | ProjectApiKey[]>(`/projects/${projectId}/keys?limit=${MAX_PAGE}`, { signal }).then(itemsOf),
 
   createApiKey: (projectId: string, name: string, environment: "live" | "test" = "live") =>
     request<CreateApiKeyResponse>(`/projects/${projectId}/keys`, {
@@ -306,27 +385,44 @@ export const api = {
     return res.json();
   },
 
-  getSummary: (projectId: string, from: string, to: string, signal?: AbortSignal) =>
+  getSummary: (projectId: string, from: string, to: string, signal?: AbortSignal, extra?: QueryExtras) =>
     request<SummaryData>(
-      `/projects/${projectId}/analytics/summary?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      `/projects/${projectId}/analytics/summary?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}${extrasToQuery(extra)}`,
       { signal }
     ),
 
-  getTopEvents: (projectId: string, from: string, to: string, limit: number = 10, signal?: AbortSignal) =>
+  getTopEvents: (projectId: string, from: string, to: string, limit: number = 10, signal?: AbortSignal, extra?: QueryExtras) =>
     request<TopEventsResponse | TopEventItem[]>(
-      `/projects/${projectId}/analytics/top-events?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=${limit}`,
+      `/projects/${projectId}/analytics/top-events?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=${limit}${extrasToQuery(extra)}`,
       { signal }
     ),
 
-  getVolume: (projectId: string, from: string, to: string, interval: string = "hour", signal?: AbortSignal) =>
+  getVolume: (projectId: string, from: string, to: string, interval: string = "hour", signal?: AbortSignal, extra?: QueryExtras) =>
     request<VolumeData>(
-      `/projects/${projectId}/analytics/volume?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&interval=${interval}`,
+      `/projects/${projectId}/analytics/volume?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&interval=${interval}${extrasToQuery(extra)}`,
       { signal }
     ),
 
-  getFunnel: (projectId: string, from: string, to: string, steps: string[], signal?: AbortSignal) =>
+  getFunnel: (projectId: string, from: string, to: string, steps: string[], signal?: AbortSignal, extra?: QueryExtras, opts?: FunnelOptions) =>
     request<FunnelData>(
-      `/projects/${projectId}/analytics/funnel?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&steps=${encodeURIComponent(steps.join(","))}`,
+      `/projects/${projectId}/analytics/funnel?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&steps=${encodeURIComponent(steps.join(","))}${extrasToQuery(extra)}${funnelOptionsToQuery(opts)}`,
+      { signal }
+    ),
+
+  getFunnelDropoff: (
+    projectId: string,
+    from: string,
+    to: string,
+    steps: string[],
+    step: number,
+    offset: number,
+    limit: number,
+    signal?: AbortSignal,
+    extra?: QueryExtras,
+    opts?: FunnelOptions
+  ) =>
+    request<FunnelDropoffData>(
+      `/projects/${projectId}/analytics/funnel/dropoff?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&steps=${encodeURIComponent(steps.join(","))}&step=${step}&offset=${offset}&limit=${limit}${extrasToQuery({ filter: extra?.filter })}${funnelOptionsToQuery(opts)}`,
       { signal }
     ),
 
@@ -337,10 +433,11 @@ export const api = {
     from: string,
     to: string,
     limit: number = 10,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    extra?: QueryExtras
   ) =>
     request<BreakdownItem[]>(
-      `/projects/${projectId}/analytics/breakdown?event_name=${encodeURIComponent(eventName)}&property=${encodeURIComponent(property)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=${limit}`,
+      `/projects/${projectId}/analytics/breakdown?event_name=${encodeURIComponent(eventName)}&property=${encodeURIComponent(property)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=${limit}${extrasToQuery(extra)}`,
       { signal }
     ),
 
@@ -351,10 +448,11 @@ export const api = {
     firstEvent: string = "signup",
     returnEvent: string = "app_opened",
     granularity: "day" | "week" = "day",
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    extra?: QueryExtras
   ) =>
     request<RetentionData>(
-      `/projects/${projectId}/analytics/retention?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&first_event=${encodeURIComponent(firstEvent)}&return_event=${encodeURIComponent(returnEvent)}&granularity=${granularity}`,
+      `/projects/${projectId}/analytics/retention?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&first_event=${encodeURIComponent(firstEvent)}&return_event=${encodeURIComponent(returnEvent)}&granularity=${granularity}${extrasToQuery(extra)}`,
       { signal }
     ),
 
@@ -373,7 +471,7 @@ export const api = {
   },
 
   listAlertRules: (projectId: string, signal?: AbortSignal) =>
-    request<AlertRule[]>(`/projects/${projectId}/alerts`, { signal }),
+    request<OffsetPage<AlertRule> | AlertRule[]>(`/projects/${projectId}/alerts?limit=${MAX_PAGE}`, { signal }).then(itemsOf),
 
   createAlertRule: (projectId: string, payload: CreateAlertRulePayload) =>
     request<AlertRule>(`/projects/${projectId}/alerts`, {
@@ -414,7 +512,7 @@ export const api = {
 
   // Phase 9: Custom Insight Widgets
   listInsights: (projectId: string, signal?: AbortSignal) =>
-    request<ProjectInsight[]>(`/projects/${projectId}/insights`, { signal }),
+    request<OffsetPage<ProjectInsight> | ProjectInsight[]>(`/projects/${projectId}/insights?limit=${MAX_PAGE}`, { signal }).then(itemsOf),
 
   createInsight: (projectId: string, payload: CreateInsightPayload) =>
     request<ProjectInsight>(`/projects/${projectId}/insights`, {
@@ -440,37 +538,35 @@ export const api = {
   checkAnomaly: (projectId: string, eventName: string, signal?: AbortSignal) =>
     request<AnomalyResult>(`/projects/${projectId}/intelligence/anomaly?event_name=${encodeURIComponent(eventName)}`, { signal }),
 
-  triggerDispatchDigests: () =>
-    request<{ dispatched_count: number; message: string }>("/intelligence/dispatch-digests", {
-      method: "POST",
-    }),
-
   // Phase 15: User Explorer & Activity Timeline
   listAnalyticsUsers: (
     projectId: string,
     search?: string,
     limit: number = 50,
-    offset: number = 0,
+    page: number = 1,
     signal?: AbortSignal
   ) => {
     const params = new URLSearchParams();
     if (search) params.set("search", search);
-    params.set("limit", limit.toString());
-    params.set("offset", offset.toString());
-    return request<UserExplorerItem[]>(`/projects/${projectId}/analytics/users?${params.toString()}`, { signal });
+    params.set("limit", Math.min(limit, MAX_PAGE).toString());
+    params.set("page", page.toString());
+    return request<OffsetPage<UserExplorerItem> | UserExplorerItem[]>(
+      `/projects/${projectId}/analytics/users?${params.toString()}`,
+      { signal }
+    ).then(itemsOf);
   },
 
   getUserTimeline: (
     projectId: string,
     distinctId: string,
     limit: number = 100,
-    before?: string,
+    cursor?: string | null,
     signal?: AbortSignal
   ) => {
     const params = new URLSearchParams();
     params.set("limit", limit.toString());
-    if (before) params.set("before", before);
-    return request<UserTimelineItem[]>(
+    if (cursor) params.set("cursor", cursor);
+    return request<CursorPage<UserTimelineItem>>(
       `/projects/${projectId}/analytics/users/${encodeURIComponent(distinctId)}/timeline?${params.toString()}`,
       { signal }
     );
@@ -508,7 +604,40 @@ export const api = {
       `/projects/${projectId}/analytics/breakdown/geo?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=${limit}`,
       { signal }
     ),
+
+  getSessions: (projectId: string, from: string, to: string, limit: number = 50, signal?: AbortSignal) =>
+    request<SessionsResponse>(
+      `/projects/${projectId}/analytics/sessions?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=${limit}`,
+      { signal }
+    ),
+
+  listCatalogEvents: (projectId: string, search = "", signal?: AbortSignal) =>
+    request<CatalogEvent[]>(`/projects/${projectId}/catalog/events?search=${encodeURIComponent(search)}`, { signal }),
+
+  listCatalogProperties: (projectId: string, scope: "event" | "person" = "event", search = "", signal?: AbortSignal) =>
+    request<CatalogProperty[]>(
+      `/projects/${projectId}/catalog/properties?scope=${scope}&search=${encodeURIComponent(search)}`,
+      { signal }
+    ),
+
+  listCatalogValues: (projectId: string, property: string, scope: "event" | "person" = "event", search = "", signal?: AbortSignal) =>
+    request<CatalogValue[]>(
+      `/projects/${projectId}/catalog/property-values?property=${encodeURIComponent(property)}&scope=${scope}&search=${encodeURIComponent(search)}`,
+      { signal }
+    ),
 };
+
+export interface SessionCount {
+  value: string;
+  count: number;
+}
+
+export interface SessionsResponse {
+  total_sessions: number;
+  avg_duration_seconds: number;
+  top_entry_pages: SessionCount[];
+  top_referring_domains: SessionCount[];
+}
 
 export interface CheckoutRequest {
   plan: "growth" | "enterprise" | string;
@@ -562,7 +691,11 @@ export const billingApi = {
 
   listTransactions: (organizationId?: string, signal?: AbortSignal) => {
     const query = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : "";
-    return request<PaymentTransaction[]>(`/billing/transactions${query}`, { signal });
+    const sep = query ? "&" : "?";
+    return request<OffsetPage<PaymentTransaction> | PaymentTransaction[]>(
+      `/billing/transactions${query}${sep}limit=${MAX_PAGE}`,
+      { signal }
+    ).then(itemsOf);
   },
 
   getProjectQuota: (projectId: string, signal?: AbortSignal) =>
@@ -588,14 +721,16 @@ export interface DLQSummary {
   replayed_items: number;
 }
 
-export interface DLQResponse {
-  items: DeadLetterItem[];
+export interface DLQResponse extends CursorPage<DeadLetterItem> {
   summary: DLQSummary;
 }
 
 export const dlqApi = {
-  listDeadLetters: (limit = 50, offset = 0, signal?: AbortSignal) =>
-    request<DLQResponse>(`/ops/dlq?limit=${limit}&offset=${offset}`, { signal }),
+  listDeadLetters: (limit = 50, cursor?: string | null, signal?: AbortSignal) =>
+    request<DLQResponse>(
+      `/ops/dlq?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      { signal }
+    ),
 
   replayDeadLetter: (id: number) =>
     request<{ replayed: boolean; id: number }>(`/ops/dlq/replay/${id}`, {
@@ -826,11 +961,8 @@ export const superadminApi = {
   getOverview: (signal?: AbortSignal) =>
     request<PlatformOverview>("/ops/overview", { signal }),
 
-  listTenants: (limit = 50, offset = 0, signal?: AbortSignal) =>
-    request<{ tenants: TenantDetail[]; count: number; offset: number; limit: number }>(
-      `/ops/tenants?limit=${limit}&offset=${offset}`,
-      { signal }
-    ),
+  listTenants: (limit = 50, page = 1, signal?: AbortSignal) =>
+    request<OffsetPage<TenantDetail>>(`/ops/tenants?limit=${Math.min(limit, MAX_PAGE)}&page=${page}`, { signal }),
 
   overrideTenantQuota: (orgId: string, payload: { monthly_event_quota: number; plan: string }) =>
     request<{ updated: boolean; organization_id: string }>(`/ops/tenants/${orgId}/quota`, {
@@ -859,11 +991,8 @@ export const superadminApi = {
       }
     ),
 
-  listAuditLogs: (limit = 50, offset = 0, signal?: AbortSignal) =>
-    request<{ logs: AuditLogEntry[]; count: number; offset: number; limit: number }>(
-      `/ops/audit-logs?limit=${limit}&offset=${offset}`,
-      { signal }
-    ),
+  listAuditLogs: (limit = 50, page = 1, signal?: AbortSignal) =>
+    request<OffsetPage<AuditLogEntry>>(`/ops/audit-logs?limit=${Math.min(limit, MAX_PAGE)}&page=${page}`, { signal }),
 
   listStaff: async () => {
     const res = await fetch(`${AUTH_BASE_URL}/api/ops/staff`, {
@@ -1027,12 +1156,7 @@ export interface WorkspaceAuditLogItem {
   created_at: string;
 }
 
-export interface ListAuditLogsResponse {
-  items: WorkspaceAuditLogItem[];
-  total: number;
-  page: number;
-  limit: number;
-}
+export type ListAuditLogsResponse = OffsetPage<WorkspaceAuditLogItem>;
 
 export interface ProjectStorageSync {
   id?: string;

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+
+	"kinetiq/internal/response"
 )
 
 var defaultBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
@@ -277,7 +279,7 @@ func MetricsHandler(authToken ...string) fiber.Handler {
 		if token != "" {
 			auth := c.Get("Authorization")
 			if auth != "Bearer "+token {
-				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+				return response.Error(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "Unauthorized")
 			}
 		}
 		c.Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")

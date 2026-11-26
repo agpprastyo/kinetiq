@@ -25,6 +25,8 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+          livenessProbe:
+            tcpSocket: { port: {{ .Values.web.port }} }
           readinessProbe:
             tcpSocket: { port: {{ .Values.web.port }} }
           resources: {{- toYaml .Values.web.resources | nindent 12 }}

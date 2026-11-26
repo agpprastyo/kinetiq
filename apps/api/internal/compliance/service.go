@@ -132,7 +132,7 @@ func (s *AuditService) List(ctx context.Context, params ListAuditLogsParams) (*L
 		       action, target_type, target_id, metadata, ip_address, user_agent, created_at
 		FROM workspace_audit_logs
 		WHERE %s
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, id DESC
 		LIMIT $%d OFFSET $%d;
 	`, whereClause, argIdx, argIdx+1)
 
@@ -178,13 +178,9 @@ func (s *AuditService) List(ctx context.Context, params ListAuditLogsParams) (*L
 		items = append(items, item)
 	}
 
-	page := (params.Offset / params.Limit) + 1
-
 	return &ListAuditLogsResponse{
 		Items: items,
 		Total: total,
-		Page:  page,
-		Limit: params.Limit,
 	}, nil
 }
 

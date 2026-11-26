@@ -33,7 +33,7 @@ func (h *Handler) GetWeeklyDigest(c *fiber.Ctx) error {
 
 	projectID, err := uuid.Parse(c.Params("projectID"))
 	if err != nil {
-		return response.Error(c, fiber.StatusBadRequest, "INVALID_PROJECT_ID", "Invalid project ID format")
+		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Project not found")
 	}
 
 	proj, err := h.projectSvc.Get(c.UserContext(), userID, projectID)
@@ -73,7 +73,7 @@ func (h *Handler) CheckAnomaly(c *fiber.Ctx) error {
 
 	projectID, err := uuid.Parse(c.Params("projectID"))
 	if err != nil {
-		return response.Error(c, fiber.StatusBadRequest, "INVALID_PROJECT_ID", "Invalid project ID format")
+		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Project not found")
 	}
 
 	eventName := c.Query("event_name")

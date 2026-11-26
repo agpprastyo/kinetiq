@@ -110,5 +110,47 @@ describe('KinetiqClient', () => {
     client.track('event_4');
     expect(client.getQueueSize()).toBe(3); // Capped at maxQueueSize 3
   });
-});
 
+  it('unload flush uses fetch keepalive with Authorization header (never header-less sendBeacon)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    globalThis.fetch = fetchMock;
+    const beacon = vi.fn().mockReturnValue(true);
+    (globalThis as any).navigator = { sendBeacon: beacon };
+
+    const client = new KinetiqClient({ apiKey: 'sp_live_test123', endpoint: 'http://localhost:8080', flushIntervalMs: 0 });
+    client.track('leaving');
+    await client.flushKeepAlive();
+
+    expect(beacon).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, options] = fetchMock.mock.calls[0];
+    expect(options.keepalive).toBe(true);
+    expect(options.headers['Authorization']).toBe('Bearer sp_live_test123');
+    expect(JSON.parse(options.body).events[0].event_name).toBe('leaving');
+    expect(client.getQueueSize()).toBe(0);
+    delete (globalThis as any).navigator;
+  });
+
+  it('unload flush requeues the batch when the ingest rejects it with a retryable status', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503 });
+    const client = new KinetiqClient({ apiKey: 'sp_live_test123', endpoint: 'http://localhost:8080', flushIntervalMs: 0 });
+    client.track('leaving');
+    await client.flushKeepAlive();
+    expect(client.getQueueSize()).toBe(1);
+  });
+
+  it('aborts a hung flush after requestTimeoutMs and requeues the batch', async () => {
+    let signal: AbortSignal | undefined;
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, opts: RequestInit) => {
+      signal = opts.signal ?? undefined;
+      return new Promise((_resolve, reject) => {
+        opts.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      });
+    });
+    const client = new KinetiqClient({ apiKey: 'sp_live_test123', endpoint: 'http://localhost:8080', flushIntervalMs: 0, requestTimeoutMs: 20 });
+    client.track('slow');
+    await client.flush();
+    expect(signal?.aborted).toBe(true);
+    expect(client.getQueueSize()).toBe(1);
+  });
+});

@@ -19,6 +19,7 @@ import (
 	"kinetiq/internal/alerting"
 	"kinetiq/internal/ingestion"
 	"kinetiq/internal/observability"
+	"kinetiq/internal/person"
 )
 
 type PublishedEvent struct {
@@ -69,6 +70,7 @@ type ConsumerWorker struct {
 	logger      *slog.Logger
 	cfg         Config
 	alertingSvc alerting.Service
+	persons     *person.Service
 }
 
 func (w *ConsumerWorker) SetAlertingService(svc alerting.Service) {
@@ -98,6 +100,7 @@ func NewConsumerWorker(pool *pgxpool.Pool, redisClient *redis.Client, logger *sl
 	w := &ConsumerWorker{
 		pool:    pool,
 		queries: db.New(pool),
+		persons: person.NewService(pool),
 		redis:   redisClient,
 		logger:  logger,
 		cfg:     cfg,
@@ -188,6 +191,9 @@ func (w *ConsumerWorker) ProcessBatch(ctx context.Context) (int, error) {
 	messages := streams[0].Messages
 	processedCount := 0
 
+	// Finish (and ack) every message already read even if shutdown was requested;
+	// cmd/worker bounds the wait. Unfinished ones stay in the PEL and are recovered.
+	ctx = context.WithoutCancel(ctx)
 	for _, msg := range messages {
 		if err := w.processMessage(ctx, msg); err != nil {
 			if w.logger != nil {
@@ -272,6 +278,18 @@ func (w *ConsumerWorker) processMessage(ctx context.Context, msg redis.XMessage)
 			return fmt.Errorf("failed to dead-letter message: %w (original error: %v)", deadLetterErr, persistErr)
 		}
 		return nil
+	}
+
+	// Resolve person + apply $set/$set_once. Event is already persisted, so failures are logged, not dead-lettered.
+	if envelope.DistinctID != "" {
+		set, _ := envelope.Properties["$set"].(map[string]interface{})
+		setOnce, _ := envelope.Properties["$set_once"].(map[string]interface{})
+		if err := w.persons.Capture(ctx, envelope.ProjectID, envelope.DistinctID, set, setOnce); err != nil && !errors.Is(err, person.ErrInvalidID) && w.logger != nil {
+			w.logger.WarnContext(ctx, "failed to resolve person for event",
+				slog.String("event_id", envelope.EventID),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 
 	// Broadcast to real-time pubsub subscribers

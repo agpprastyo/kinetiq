@@ -51,44 +51,6 @@ func NewHTTPClient(baseURL, internalSecret string) *HTTPClient {
 }
 
 func (c *HTTPClient) ValidateSession(cookie string) (*IntrospectResponse, error) {
-	// If in test mode with mock cookies, handle directly for hermetic tests
-	if strings.HasPrefix(cookie, "admin_session") {
-		resp := &IntrospectResponse{Authenticated: true}
-		resp.User.ID = "admin-1-id"
-		resp.User.Email = "admin@kinetiq.dev"
-		resp.User.Role = "owner"
-		resp.User.IsPlatformStaff = true
-		sRole := "superadmin"
-		resp.User.StaffRole = &sRole
-		return resp, nil
-	}
-	if strings.HasPrefix(cookie, "ops_session") {
-		resp := &IntrospectResponse{Authenticated: true}
-		resp.User.ID = "ops-1-id"
-		resp.User.Email = "ops@kinetiq.dev"
-		resp.User.Role = "user"
-		resp.User.IsPlatformStaff = true
-		sRole := "ops"
-		resp.User.StaffRole = &sRole
-		return resp, nil
-	}
-	if strings.HasPrefix(cookie, "user1_session") {
-		resp := &IntrospectResponse{Authenticated: true}
-		resp.User.ID = "user-1-id"
-		resp.User.Email = "user1@example.com"
-		resp.User.Role = "owner" // Tenant owner, NOT platform staff
-		resp.User.IsPlatformStaff = false
-		return resp, nil
-	}
-	if strings.HasPrefix(cookie, "user2_session") {
-		resp := &IntrospectResponse{Authenticated: true}
-		resp.User.ID = "user-2-id"
-		resp.User.Email = "user2@example.com"
-		resp.User.Role = "user"
-		resp.User.IsPlatformStaff = false
-		return resp, nil
-	}
-
 	payload, err := json.Marshal(map[string]string{"cookie": cookie})
 	if err != nil {
 		return nil, err

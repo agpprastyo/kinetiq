@@ -1,5 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import { page } from "$app/state";
+  import { safeRedirect } from "$lib/redirect";
   import { authClient } from "$lib/auth-client";
   import AuthShell from "$lib/components/ui/AuthShell.svelte";
   import { ArrowRight, Eye, EyeOff, ShieldCheck } from "lucide-svelte";
@@ -35,7 +37,7 @@
         if (res?.error) {
           error = "Invalid authenticator code. Please try again.";
         } else {
-          goto("/app");
+          goto(safeRedirect(page.url.searchParams.get("redirect")));
         }
       } catch {
         error = "Unable to verify two-factor code.";
@@ -62,7 +64,7 @@
       } else if ((res.data as any)?.twoFactorRedirect) {
         requiresTwoFactor = true;
       } else {
-        goto("/app");
+        goto(safeRedirect(page.url.searchParams.get("redirect")));
       }
     } catch (err: any) {
       if (/failed to fetch|networkerror|err_connection_refused/i.test(err?.message || "")) {

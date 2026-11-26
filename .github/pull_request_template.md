@@ -2,8 +2,7 @@
 <!-- Berikan ringkasan singkat perubahan dan tujuan teknis dari PR ini -->
 
 ## 🎯 Milestone / Ticket
-- Ref Docs: `docs/10-implementation-plan.md` - **Week X (Days Y-Z)**
-- Related Issue/Discussion: #
+- Related Issue/Discussion: Refs #
 
 ## 🧱 Seams & Architectural Impact
 - **Seam Under Test**: <!-- Tentukan boundary yang diuji (misal: HTTP Handler, Queue Consumer, DB Repository) -->
@@ -17,6 +16,8 @@ Sesuai standar TDD (*Red-Green Loop*), verifikasi berikut telah dijalankan:
 
 - [ ] **Unit Tests (`make test-unit`)**: Menguji isolated business logic & edge cases.
 - [ ] **Component Tests (`make test-component`)**: Menguji HTTP handler, DB persistence, & Redis.
+- [ ] **Web Tests (`make test-web`)**: Menguji frontend (`apps/web/tests`).
+- [ ] **SDK Tests (`make test-sdk`)**: Menguji client SDK (`packages/sdk/tests`).
 - [ ] **Coverage Gate (`make test-coverage`)**: Memenuhi ambang batas minimal coverage (>= 70%).
 - [ ] **Linter & Formatting (`make lint`)**: Lolos `go vet`, `gofmt`, dan TypeScript typecheck.
 
@@ -27,7 +28,7 @@ Sesuai standar TDD (*Red-Green Loop*), verifikasi berikut telah dijalankan:
 
 ## 🔍 Observability & Traceability Checklist
 - [ ] Log menggunakan structured logger (`log/slog`) dengan `trace_id` & `request_id`.
-- [ ] **Security**: Tidak ada password, Better Auth token/cookie, atau raw API key (`sp_live_...`) yang tercatat di log.
+- [ ] **Security**: Tidak ada password, Better Auth token/cookie, atau raw API key (`ktq_...`) yang tercatat di log.
 - [ ] Error response mengikuti format standar: `{"success": false, "error": {...}}`.
 
 ## 🚀 Deployment / Migration Notes (Ops)
@@ -37,5 +38,5 @@ Sesuai standar TDD (*Red-Green Loop*), verifikasi berikut telah dijalankan:
 - Branch name: `feat/<issue-num>-<slug>` / `fix/<issue-num>-<slug>` / `docs/<issue-num>-<slug>` / `ci/<issue-num>-<slug>`.
 - Satu PR = satu issue. Hindari PR yang menyentuh banyak issue sekaligus.
 - PR title mengikuti semantic commit: `feat(scope): ...`, `fix(scope): ...`, `docs(scope): ...`, `ci(scope): ...`.
-- PR body WAJIB mereferensikan issue via `Resolves #<issue_number>`.
+- PR body WAJIB mereferensikan issue via `Refs #<issue_number>` (bukan `Closes`/`Resolves`, agar issue tetap OPEN untuk QA & Docs).
 - Lihat `docs/MULTI_AGENT_STANDARDS.md` (section Branch Naming & PR Conventions) untuk detail.

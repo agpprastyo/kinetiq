@@ -26,10 +26,11 @@ echo ""
 echo "-> [Step 2/2] Scanning Web Client for Leaked Internal /ops Endpoints..."
 EXPOSED_OPS=$(grep -rn "api/v1/ops" apps/web/src/routes/app || true)
 if [ -n "$EXPOSED_OPS" ]; then
-  echo "[WARNING] Found references to internal /ops endpoints inside client workspace routes (apps/web/src/routes/app):"
+  echo "[FAIL] Found references to internal /ops endpoints inside client workspace routes (apps/web/src/routes/app):"
   echo "$EXPOSED_OPS"
   echo ""
   echo "Resolution: Ensure /ops endpoints are removed from client workspace settings (Issue #45)."
+  exit 1
 else
   echo "[PASS] No internal /ops endpoints exposed in client workspace routes."
 fi

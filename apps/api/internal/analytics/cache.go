@@ -13,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"kinetiq/internal/observability"
+	"kinetiq/internal/response"
 )
 
 type CachedAnalyticsService struct {
@@ -37,8 +38,8 @@ func (c *CachedAnalyticsService) cacheKey(projectID uuid.UUID, endpoint, rawPara
 	return fmt.Sprintf("cache:analytics:%s:%s:%s", projectID.String(), endpoint, hashStr)
 }
 
-func (c *CachedAnalyticsService) GetSummary(ctx context.Context, projectID uuid.UUID, from, to time.Time) (*SummaryResponse, error) {
-	key := c.cacheKey(projectID, "summary", fmt.Sprintf("from=%s&to=%s", from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339)))
+func (c *CachedAnalyticsService) GetSummary(ctx context.Context, projectID uuid.UUID, from, to time.Time, opts QueryOptions) (*SummaryResponse, error) {
+	key := c.cacheKey(projectID, "summary", fmt.Sprintf("from=%s&to=%s", from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339))+"&opts="+opts.CacheKey())
 
 	if c.redis != nil {
 		if val, err := c.redis.Get(ctx, key).Result(); err == nil {
@@ -51,7 +52,7 @@ func (c *CachedAnalyticsService) GetSummary(ctx context.Context, projectID uuid.
 	}
 	observability.DefaultMetrics.CacheMiss()
 
-	resp, err := c.underlying.GetSummary(ctx, projectID, from, to)
+	resp, err := c.underlying.GetSummary(ctx, projectID, from, to, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -65,8 +66,8 @@ func (c *CachedAnalyticsService) GetSummary(ctx context.Context, projectID uuid.
 	return resp, nil
 }
 
-func (c *CachedAnalyticsService) GetTopEvents(ctx context.Context, projectID uuid.UUID, from, to time.Time, limit int) (*TopEventsResponse, error) {
-	key := c.cacheKey(projectID, "top-events", fmt.Sprintf("from=%s&to=%s&limit=%d", from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), limit))
+func (c *CachedAnalyticsService) GetTopEvents(ctx context.Context, projectID uuid.UUID, from, to time.Time, limit int, opts QueryOptions) (*TopEventsResponse, error) {
+	key := c.cacheKey(projectID, "top-events", fmt.Sprintf("from=%s&to=%s&limit=%d", from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), limit)+"&opts="+opts.CacheKey())
 
 	if c.redis != nil {
 		if val, err := c.redis.Get(ctx, key).Result(); err == nil {
@@ -79,7 +80,7 @@ func (c *CachedAnalyticsService) GetTopEvents(ctx context.Context, projectID uui
 	}
 	observability.DefaultMetrics.CacheMiss()
 
-	resp, err := c.underlying.GetTopEvents(ctx, projectID, from, to, limit)
+	resp, err := c.underlying.GetTopEvents(ctx, projectID, from, to, limit, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -93,8 +94,8 @@ func (c *CachedAnalyticsService) GetTopEvents(ctx context.Context, projectID uui
 	return resp, nil
 }
 
-func (c *CachedAnalyticsService) GetVolume(ctx context.Context, projectID uuid.UUID, from, to time.Time, interval string) (*VolumeResponse, error) {
-	key := c.cacheKey(projectID, "volume", fmt.Sprintf("from=%s&to=%s&interval=%s", from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), interval))
+func (c *CachedAnalyticsService) GetVolume(ctx context.Context, projectID uuid.UUID, from, to time.Time, interval string, opts QueryOptions) (*VolumeResponse, error) {
+	key := c.cacheKey(projectID, "volume", fmt.Sprintf("from=%s&to=%s&interval=%s", from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), interval)+"&opts="+opts.CacheKey())
 
 	if c.redis != nil {
 		if val, err := c.redis.Get(ctx, key).Result(); err == nil {
@@ -107,7 +108,7 @@ func (c *CachedAnalyticsService) GetVolume(ctx context.Context, projectID uuid.U
 	}
 	observability.DefaultMetrics.CacheMiss()
 
-	resp, err := c.underlying.GetVolume(ctx, projectID, from, to, interval)
+	resp, err := c.underlying.GetVolume(ctx, projectID, from, to, interval, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -121,8 +122,8 @@ func (c *CachedAnalyticsService) GetVolume(ctx context.Context, projectID uuid.U
 	return resp, nil
 }
 
-func (c *CachedAnalyticsService) GetFunnel(ctx context.Context, projectID uuid.UUID, from, to time.Time, steps []string) (*FunnelResponse, error) {
-	key := c.cacheKey(projectID, "funnel", fmt.Sprintf("from=%s&to=%s&steps=%v", from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), steps))
+func (c *CachedAnalyticsService) GetFunnel(ctx context.Context, projectID uuid.UUID, from, to time.Time, p FunnelParams, opts QueryOptions) (*FunnelResponse, error) {
+	key := c.cacheKey(projectID, "funnel", fmt.Sprintf("from=%s&to=%s&", from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339))+p.CacheKey()+"&opts="+opts.CacheKey())
 
 	if c.redis != nil {
 		if val, err := c.redis.Get(ctx, key).Result(); err == nil {
@@ -135,7 +136,7 @@ func (c *CachedAnalyticsService) GetFunnel(ctx context.Context, projectID uuid.U
 	}
 	observability.DefaultMetrics.CacheMiss()
 
-	resp, err := c.underlying.GetFunnel(ctx, projectID, from, to, steps)
+	resp, err := c.underlying.GetFunnel(ctx, projectID, from, to, p, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -149,8 +150,8 @@ func (c *CachedAnalyticsService) GetFunnel(ctx context.Context, projectID uuid.U
 	return resp, nil
 }
 
-func (c *CachedAnalyticsService) GetPropertyBreakdown(ctx context.Context, projectID uuid.UUID, eventName, property string, from, to time.Time, limit int) ([]PropertyBreakdownItem, error) {
-	key := c.cacheKey(projectID, "breakdown", fmt.Sprintf("event=%s&prop=%s&from=%s&to=%s&limit=%d", eventName, property, from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), limit))
+func (c *CachedAnalyticsService) GetPropertyBreakdown(ctx context.Context, projectID uuid.UUID, eventName, property string, from, to time.Time, limit int, opts QueryOptions) ([]PropertyBreakdownItem, error) {
+	key := c.cacheKey(projectID, "breakdown", fmt.Sprintf("event=%s&prop=%s&from=%s&to=%s&limit=%d", eventName, property, from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), limit)+"&opts="+opts.CacheKey())
 
 	if c.redis != nil {
 		if val, err := c.redis.Get(ctx, key).Result(); err == nil {
@@ -163,7 +164,7 @@ func (c *CachedAnalyticsService) GetPropertyBreakdown(ctx context.Context, proje
 	}
 	observability.DefaultMetrics.CacheMiss()
 
-	resp, err := c.underlying.GetPropertyBreakdown(ctx, projectID, eventName, property, from, to, limit)
+	resp, err := c.underlying.GetPropertyBreakdown(ctx, projectID, eventName, property, from, to, limit, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -177,8 +178,8 @@ func (c *CachedAnalyticsService) GetPropertyBreakdown(ctx context.Context, proje
 	return resp, nil
 }
 
-func (c *CachedAnalyticsService) GetRetention(ctx context.Context, projectID uuid.UUID, from, to time.Time, firstEvent, returnEvent, granularity string) (*RetentionResponse, error) {
-	key := c.cacheKey(projectID, "retention", fmt.Sprintf("first=%s&return=%s&granularity=%s&from=%s&to=%s", firstEvent, returnEvent, granularity, from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339)))
+func (c *CachedAnalyticsService) GetRetention(ctx context.Context, projectID uuid.UUID, from, to time.Time, firstEvent, returnEvent, granularity string, opts QueryOptions) (*RetentionResponse, error) {
+	key := c.cacheKey(projectID, "retention", fmt.Sprintf("first=%s&return=%s&granularity=%s&from=%s&to=%s", firstEvent, returnEvent, granularity, from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339))+"&opts="+opts.CacheKey())
 
 	if c.redis != nil {
 		if val, err := c.redis.Get(ctx, key).Result(); err == nil {
@@ -191,7 +192,7 @@ func (c *CachedAnalyticsService) GetRetention(ctx context.Context, projectID uui
 	}
 	observability.DefaultMetrics.CacheMiss()
 
-	resp, err := c.underlying.GetRetention(ctx, projectID, from, to, firstEvent, returnEvent, granularity)
+	resp, err := c.underlying.GetRetention(ctx, projectID, from, to, firstEvent, returnEvent, granularity, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -205,12 +206,12 @@ func (c *CachedAnalyticsService) GetRetention(ctx context.Context, projectID uui
 	return resp, nil
 }
 
-func (c *CachedAnalyticsService) ListUsers(ctx context.Context, projectID uuid.UUID, search string, limit, offset int) ([]UserExplorerItem, error) {
+func (c *CachedAnalyticsService) ListUsers(ctx context.Context, projectID uuid.UUID, search string, limit, offset int) ([]UserExplorerItem, int64, error) {
 	return c.underlying.ListUsers(ctx, projectID, search, limit, offset)
 }
 
-func (c *CachedAnalyticsService) GetUserTimeline(ctx context.Context, projectID uuid.UUID, distinctID string, limit int, before *time.Time) ([]UserTimelineItem, error) {
-	return c.underlying.GetUserTimeline(ctx, projectID, distinctID, limit, before)
+func (c *CachedAnalyticsService) GetUserTimeline(ctx context.Context, projectID uuid.UUID, distinctID string, limit int, cursor *response.Cursor, before *time.Time) ([]UserTimelineItem, bool, error) {
+	return c.underlying.GetUserTimeline(ctx, projectID, distinctID, limit, cursor, before)
 }
 
 func (c *CachedAnalyticsService) GetDeviceBreakdown(ctx context.Context, projectID uuid.UUID, from, to time.Time) ([]DeviceBreakdownItem, error) {
@@ -267,4 +268,25 @@ func (c *CachedAnalyticsService) GetGeoBreakdown(ctx context.Context, projectID 
 	}
 
 	return resp, nil
+}
+
+func (c *CachedAnalyticsService) GetSessions(ctx context.Context, projectID uuid.UUID, from, to time.Time, timeout time.Duration, limit int) (*SessionsResponse, error) {
+	return c.underlying.GetSessions(ctx, projectID, from, to, timeout, limit)
+}
+
+func (c *CachedAnalyticsService) ListEvents(ctx context.Context, projectID uuid.UUID, search string, limit int) ([]CatalogEvent, error) {
+	return c.underlying.ListEvents(ctx, projectID, search, limit)
+}
+
+func (c *CachedAnalyticsService) ListProperties(ctx context.Context, projectID uuid.UUID, scope, eventName, search string, limit int) ([]CatalogProperty, error) {
+	return c.underlying.ListProperties(ctx, projectID, scope, eventName, search, limit)
+}
+
+func (c *CachedAnalyticsService) ListPropertyValues(ctx context.Context, projectID uuid.UUID, scope, property, eventName, search string, limit int) ([]PropertyValueItem, error) {
+	return c.underlying.ListPropertyValues(ctx, projectID, scope, property, eventName, search, limit)
+}
+
+// GetFunnelDropoff is not cached: paginated person lists are drill-downs, not dashboard tiles.
+func (c *CachedAnalyticsService) GetFunnelDropoff(ctx context.Context, projectID uuid.UUID, from, to time.Time, p FunnelParams, step, limit, offset int, opts QueryOptions) (*FunnelDropoffResponse, error) {
+	return c.underlying.GetFunnelDropoff(ctx, projectID, from, to, p, step, limit, offset, opts)
 }

@@ -20,8 +20,8 @@ SELECT COUNT(*) FROM events WHERE project_id = $1;
 -- name: GetAnalyticsSummary :one
 SELECT 
     COUNT(*)::bigint AS total_events,
-    COUNT(DISTINCT distinct_id)::bigint AS unique_distinct_ids
-FROM events
+    COUNT(DISTINCT person_key)::bigint AS unique_distinct_ids
+FROM resolved_events
 WHERE project_id = $1
   AND occurred_at >= $2
   AND occurred_at < $3;
@@ -70,16 +70,6 @@ WHERE project_id = $1
   AND occurred_at < $3
 GROUP BY bucket
 ORDER BY bucket ASC;
-
--- name: GetEventsForFunnel :many
-SELECT distinct_id, event_name, occurred_at, id
-FROM events
-WHERE project_id = $1
-  AND occurred_at >= $2
-  AND occurred_at < $3
-  AND distinct_id IS NOT NULL
-  AND event_name = ANY($4::text[])
-ORDER BY distinct_id, occurred_at ASC, id ASC;
 
 -- name: GetPropertyBreakdown :many
 SELECT 

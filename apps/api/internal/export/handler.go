@@ -16,6 +16,7 @@ import (
 
 	"kinetiq/internal/project"
 	"kinetiq/internal/response"
+	"kinetiq/internal/webhook"
 )
 
 type Handler struct {
@@ -56,72 +57,87 @@ func (h *Handler) ExportEvents(c *fiber.Ctx) error {
 		return response.Error(c, fiber.StatusNotFound, "NOT_FOUND", "Project not found")
 	}
 
-	format := c.Query("format", "csv")
-	if format != "csv" && format != "json" {
-		return response.Error(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Format must be 'csv' or 'json'")
+	if format := c.Query("format", "csv"); format != "csv" {
+		return response.Error(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Format must be 'csv'")
 	}
 
-	var fromTime, toTime *time.Time
-	if fromStr := strings.TrimSpace(c.Query("from")); fromStr != "" {
-		if t, err := time.Parse(time.RFC3339, fromStr); err == nil {
-			tUTC := t.UTC()
-			fromTime = &tUTC
-		} else {
-			return response.Error(c, fiber.StatusBadRequest, "INVALID_DATE_RANGE", "Invalid 'from' timestamp format. Must be RFC3339")
-		}
-	}
+	toTime := time.Now().UTC()
 	if toStr := strings.TrimSpace(c.Query("to")); toStr != "" {
-		if t, err := time.Parse(time.RFC3339, toStr); err == nil {
-			tUTC := t.UTC()
-			toTime = &tUTC
-		} else {
+		t, err := time.Parse(time.RFC3339, toStr)
+		if err != nil {
 			return response.Error(c, fiber.StatusBadRequest, "INVALID_DATE_RANGE", "Invalid 'to' timestamp format. Must be RFC3339")
 		}
+		toTime = t.UTC()
+	}
+	fromTime := toTime.Add(-maxExportRange)
+	if fromStr := strings.TrimSpace(c.Query("from")); fromStr != "" {
+		t, err := time.Parse(time.RFC3339, fromStr)
+		if err != nil {
+			return response.Error(c, fiber.StatusBadRequest, "INVALID_DATE_RANGE", "Invalid 'from' timestamp format. Must be RFC3339")
+		}
+		fromTime = t.UTC()
+	}
+	if fromTime.After(toTime) || toTime.Sub(fromTime) > maxExportRange {
+		return response.Error(c, fiber.StatusBadRequest, "INVALID_DATE_RANGE", "Date range must be ordered and at most 90 days")
 	}
 
-	if format == "csv" {
-		c.Set("Content-Type", "text/csv")
-		c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"events-%s.csv\"", projectID.String()))
-
-		userCtx := c.UserContext()
-		c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
-			csvWriter := csv.NewWriter(w)
-			_ = csvWriter.Write([]string{"event_id", "event_name", "timestamp", "distinct_id", "properties"})
-			csvWriter.Flush()
-
-			rows, err := h.pool.Query(userCtx, `
-				SELECT event_id, event_name, occurred_at, COALESCE(distinct_id, ''), properties::text
-				FROM events
-				WHERE project_id = $1
-				  AND ($2::timestamptz IS NULL OR occurred_at >= $2)
-				  AND ($3::timestamptz IS NULL OR occurred_at <= $3)
-				ORDER BY occurred_at DESC
-				LIMIT 10000
-			`, projectID, fromTime, toTime)
-			if err != nil {
-				return
-			}
-			defer rows.Close()
-
-			for rows.Next() {
-				var eventID, eventName, distinctID, props string
-				var occurredAt time.Time
-				if err := rows.Scan(&eventID, &eventName, &occurredAt, &distinctID, &props); err == nil {
-					_ = csvWriter.Write([]string{
-						eventID,
-						eventName,
-						occurredAt.UTC().Format(time.RFC3339),
-						distinctID,
-						props,
-					})
-					csvWriter.Flush()
-				}
-			}
-		}))
-		return nil
+	userCtx := c.UserContext()
+	var truncated bool
+	if err := h.pool.QueryRow(userCtx, `
+		SELECT EXISTS (
+			SELECT 1 FROM events
+			WHERE project_id = $1 AND occurred_at >= $2 AND occurred_at <= $3
+			ORDER BY occurred_at DESC OFFSET $4
+		)`, projectID, fromTime, toTime, maxExportRows).Scan(&truncated); err != nil {
+		return h.exportFail(c, err)
+	}
+	rows, err := h.pool.Query(userCtx, `
+		SELECT event_id, event_name, occurred_at, COALESCE(distinct_id, ''), properties::text
+		FROM events
+		WHERE project_id = $1 AND occurred_at >= $2 AND occurred_at <= $3
+		ORDER BY occurred_at DESC
+		LIMIT $4`, projectID, fromTime, toTime, maxExportRows)
+	if err != nil {
+		return h.exportFail(c, err)
 	}
 
-	return response.Error(c, fiber.StatusBadRequest, "INVALID_FORMAT", "Unsupported format")
+	c.Set("Content-Type", "text/csv")
+	c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"events-%s.csv\"", projectID.String()))
+	if truncated {
+		// ponytail: hard cap at maxExportRows; add cursor pagination when users need full dumps (storage sync covers bulk).
+		c.Set("X-Kinetiq-Truncated", "true")
+	}
+	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
+		defer rows.Close()
+		csvWriter := csv.NewWriter(w)
+		_ = csvWriter.Write([]string{"event_id", "event_name", "timestamp", "distinct_id", "properties"})
+		for rows.Next() {
+			var eventID, eventName, distinctID, props string
+			var occurredAt time.Time
+			if err := rows.Scan(&eventID, &eventName, &occurredAt, &distinctID, &props); err != nil {
+				break
+			}
+			_ = csvWriter.Write([]string{eventID, eventName, occurredAt.UTC().Format(time.RFC3339), distinctID, props})
+		}
+		csvWriter.Flush()
+		if err := rows.Err(); err != nil {
+			// Headers are already sent; log and leave an explicit marker instead of a silently short file.
+			h.logger.ErrorContext(userCtx, "export stream aborted", slog.String("project_id", projectID.String()), slog.String("error", err.Error()))
+			_, _ = w.WriteString("# export aborted: internal error\n")
+		}
+		_ = w.Flush()
+	}))
+	return nil
+}
+
+const (
+	maxExportRows  = 10000
+	maxExportRange = 90 * 24 * time.Hour
+)
+
+func (h *Handler) exportFail(c *fiber.Ctx, err error) error {
+	h.logger.ErrorContext(c.UserContext(), "export query failed", slog.String("error", err.Error()))
+	return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Export failed")
 }
 
 // GetStorageSync retrieves project cloud storage sync configuration with secret masked
@@ -202,6 +218,10 @@ func (h *Handler) PutStorageSync(c *fiber.Ctx) error {
 	var req UpdateStorageSyncRequest
 	if err := c.BodyParser(&req); err != nil {
 		return response.Error(c, fiber.StatusBadRequest, "VALIDATION_ERROR", "Invalid request body")
+	}
+
+	if err := validateEndpointURL(req.EndpointURL); err != nil {
+		return response.Error(c, fiber.StatusBadRequest, "UNSAFE_ENDPOINT_URL", err.Error())
 	}
 
 	if req.Provider == "" {
@@ -289,6 +309,10 @@ func (h *Handler) TestStorageSync(c *fiber.Ctx) error {
 	var req UpdateStorageSyncRequest
 	_ = c.BodyParser(&req)
 
+	if err := validateEndpointURL(req.EndpointURL); err != nil {
+		return response.Error(c, fiber.StatusBadRequest, "UNSAFE_ENDPOINT_URL", err.Error())
+	}
+
 	secret := req.SecretAccessKey
 	if secret == "" || secret == "********" {
 		_ = h.pool.QueryRow(c.UserContext(), `SELECT secret_access_key FROM project_storage_sync WHERE project_id = $1`, projectID).Scan(&secret)
@@ -316,4 +340,16 @@ func (h *Handler) TestStorageSync(c *fiber.Ctx) error {
 		"success": true,
 		"message": "Connection to cloud storage bucket verified successfully",
 	})
+}
+
+// validateEndpointURL blocks SSRF via custom S3 endpoints (empty = AWS default).
+func validateEndpointURL(endpoint string) error {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return nil
+	}
+	if err := webhook.IsSafeTargetURL(endpoint); err != nil {
+		return fmt.Errorf("endpoint_url rejected: %w", err)
+	}
+	return nil
 }

@@ -1,0 +1,1 @@
+-- Backfilled rows are removed by 000023 down (DROP TABLE).

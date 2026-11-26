@@ -233,7 +233,7 @@ func (r *SQLCRepository) ListProjects(ctx context.Context, ownerUserID string) (
 		    )
 		)
 		WHERE p.owner_user_id = $1 OR m."id" IS NOT NULL
-		ORDER BY p.created_at DESC
+		ORDER BY p.created_at DESC, p.id DESC
 	`, ownerUserID)
 	if err != nil {
 		// Fallback for test databases or before member table queries
@@ -246,7 +246,7 @@ func (r *SQLCRepository) ListProjects(ctx context.Context, ownerUserID string) (
 			       created_at, updated_at
 			FROM projects
 			WHERE owner_user_id = $1
-			ORDER BY created_at DESC
+			ORDER BY created_at DESC, id DESC
 		`, ownerUserID)
 		if err2 != nil {
 			sqlcRows, fallbackErr := r.queries.ListProjectsByOwner(ctx, ownerUserID)
@@ -624,7 +624,7 @@ func (r *SQLCRepository) ListAPIKeys(ctx context.Context, ownerUserID string, pr
 		       created_at, revoked_at, last_used_at, expires_at
 		FROM project_api_keys
 		WHERE project_id = $1
-		ORDER BY revoked_at IS NOT NULL ASC, created_at DESC
+		ORDER BY revoked_at IS NOT NULL ASC, created_at DESC, id DESC
 	`, projectID)
 	if err != nil {
 		return nil, err

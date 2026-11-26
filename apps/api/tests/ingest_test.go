@@ -23,7 +23,7 @@ func TestIngestSeam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create container: %v", err)
 	}
-	server := app.SetupWithContainer(container)
+	server := app.SetupWithContainer(withFakeAuth(container))
 
 	t.Run("missing API key returns 401 Unauthorized", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]interface{}{

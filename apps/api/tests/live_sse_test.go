@@ -6,49 +6,73 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	db "kinetiq/db/sqlc"
 	"kinetiq/internal/app"
 )
 
 func TestLiveSSEStream(t *testing.T) {
-	os.Setenv("AUTH_INTERNAL_SECRET", "test-internal-secret")
-	os.Setenv("AUTH_BASE_URL", "http://localhost:3001")
-
-	server := app.Setup()
-	projectID := uuid.New().String()
-
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/projects/%s/live?once=true", projectID), nil)
-	req.Header.Set("Cookie", "user1_session_cookie")
-	req.Header.Set("Accept", "text/event-stream")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-	req = req.WithContext(ctx)
-
-	resp, err := server.Test(req, 1000)
+	ctx := context.Background()
+	container, err := app.NewContainer(ctx)
 	if err != nil {
-		t.Fatalf("failed to execute request: %v", err)
+		t.Fatalf("failed to create container: %v", err)
+	}
+	server := app.SetupWithContainer(withFakeAuth(container))
+
+	projectID := uuid.New()
+	if _, err := db.New(container.DBPool).CreateProject(ctx, db.CreateProjectParams{
+		ID:          pgtype.UUID{Bytes: projectID, Valid: true},
+		OwnerUserID: "user-1-id",
+		Name:        "Live Project " + projectID.String()[:8],
+		Status:      "active",
+	}); err != nil {
+		t.Fatalf("failed to create project: %v", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected status 200 OK, got %d", resp.StatusCode)
+	get := func(path, cookie string) *http.Response {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Cookie", cookie)
+		req.Header.Set("Accept", "text/event-stream")
+		rctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		t.Cleanup(cancel)
+		resp, err := server.Test(req.WithContext(rctx), 1000)
+		if err != nil {
+			t.Fatalf("failed to execute request: %v", err)
+		}
+		return resp
 	}
 
-	contentType := resp.Header.Get("Content-Type")
-	if !strings.HasPrefix(contentType, "text/event-stream") {
-		t.Errorf("expected Content-Type text/event-stream, got %s", contentType)
-	}
+	t.Run("owner can stream", func(t *testing.T) {
+		resp := get(fmt.Sprintf("/api/v1/projects/%s/live?once=true", projectID), "user1_session_cookie")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+			t.Errorf("expected text/event-stream, got %s", ct)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(body), ": connected") {
+			t.Errorf("expected ': connected', got %q", body)
+		}
+	})
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("failed to read response body: %v", err)
-	}
-	if !strings.Contains(string(body), ": connected") {
-		t.Errorf("expected body to contain ': connected', got %q", string(body))
-	}
+	t.Run("non-member gets 404", func(t *testing.T) {
+		resp := get(fmt.Sprintf("/api/v1/projects/%s/live?once=true", projectID), "user2_session_cookie")
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("cross-tenant live stream: expected 404, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("invalid UUID gets 404", func(t *testing.T) {
+		resp := get("/api/v1/projects/not-a-uuid/live?once=true", "user1_session_cookie")
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", resp.StatusCode)
+		}
+	})
 }

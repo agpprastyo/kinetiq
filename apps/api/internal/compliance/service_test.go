@@ -66,8 +66,6 @@ func TestAuditService_Unit(t *testing.T) {
 					},
 				},
 				Total: 1,
-				Page:  1,
-				Limit: 50,
 			}, nil
 		},
 	}

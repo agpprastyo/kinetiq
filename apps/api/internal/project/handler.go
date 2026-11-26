@@ -127,9 +127,11 @@ func (h *Handler) CreateProject(c *fiber.Ctx) error {
 
 // ListProjects godoc
 // @Summary List projects
-// @Description Returns all projects owned by the currently authenticated user
+// @Description Returns projects accessible to the authenticated user as {items, pagination}
 // @Tags projects
 // @Produce json
+// @Param page query int false "Page (1-based, default 1)"
+// @Param limit query int false "Page size (default 20, max 100)"
 // @Success 200 {object} response.Response
 // @Failure 401 {object} response.Response
 // @Failure 500 {object} response.Response
@@ -145,7 +147,7 @@ func (h *Handler) ListProjects(c *fiber.Ctx) error {
 		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list projects")
 	}
 
-	return response.Success(c, fiber.StatusOK, projects)
+	return response.Success(c, fiber.StatusOK, response.PaginateSlice(projects, response.ParseOffsetParams(c, false)))
 }
 
 // GetProject godoc
@@ -333,6 +335,8 @@ func (h *Handler) RotateKey(c *fiber.Ctx) error {
 // @Summary List all API keys for a project
 // @Tags projects
 // @Produce json
+// @Param page query int false "Page (1-based, default 1)"
+// @Param limit query int false "Page size (default 20, max 100)"
 // @Param projectID path string true "Project UUID"
 // @Success 200 {object} response.Response
 // @Router /api/v1/projects/{projectID}/keys [get]
@@ -355,7 +359,7 @@ func (h *Handler) ListAPIKeys(c *fiber.Ctx) error {
 		return response.Error(c, fiber.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list API keys")
 	}
 
-	return response.Success(c, fiber.StatusOK, keys)
+	return response.Success(c, fiber.StatusOK, response.PaginateSlice(keys, response.ParseOffsetParams(c, false)))
 }
 
 // CreateAPIKey godoc

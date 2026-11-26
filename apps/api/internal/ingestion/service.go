@@ -52,7 +52,7 @@ func (s *IngestionService) EnqueueEvents(ctx context.Context, projectID uuid.UUI
 		for _, evt := range chunk {
 			occurredAt := now
 			if evt.OccurredAt != nil {
-				occurredAt = evt.OccurredAt.UTC()
+				occurredAt = ClampOccurredAt(evt.OccurredAt.UTC(), now)
 			}
 			props := evt.Properties
 			if props == nil {
@@ -103,4 +103,21 @@ func (s *IngestionService) EnqueueEvents(ctx context.Context, projectID uuid.UUI
 	}
 
 	return len(events), nil
+}
+
+const (
+	// MaxEventAge matches the worker retention sweep (90 days): older events would be purged anyway.
+	MaxEventAge = 90 * 24 * time.Hour
+	// MaxFutureSkew tolerates client clock drift.
+	MaxFutureSkew = time.Hour
+)
+
+// ClampOccurredAt keeps client timestamps within [now-MaxEventAge, now+MaxFutureSkew];
+// anything outside (far future/past, zero value) is replaced by the server receive time
+// so bogus clocks cannot pollute charts.
+func ClampOccurredAt(t, now time.Time) time.Time {
+	if t.Before(now.Add(-MaxEventAge)) || t.After(now.Add(MaxFutureSkew)) {
+		return now
+	}
+	return t
 }
