@@ -98,6 +98,7 @@ services:
       APP_ENV: "production"
       DATABASE_URL: "postgres://kinetiq:kinetiq@postgres:5432/kinetiq?sslmode=disable"
       REDIS_URL: "redis://redis:6379/0"
+      AUTH_INTERNAL_SECRET: "e2e-secret-key-must-be-at-least-32-chars-long" # gitleaks:allow
 
   web:
     build:

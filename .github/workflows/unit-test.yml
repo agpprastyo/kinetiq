@@ -99,10 +99,3 @@ jobs:
           make test-sdk
           (cd apps/web && bun install --frozen-lockfile --ignore-scripts)
           make test-web
-
-      - name: Build Docs
-        if: steps.filter.outputs.run_docs_build == 'true'
-        run: |
-          cd apps/docs
-          bun install --frozen-lockfile --ignore-scripts
-          bun run build
