@@ -180,7 +180,7 @@
   const exampleAuthHeader = ["Authorization", "Bearer <your_project_key>"].join(": ");
 
   const rawSnippets = {
-    sdk: `import { KinetiqClient } from '@kinetiq/sdk';
+    sdk: `import { KinetiqClient } from '@agpprastyo/kinetiq-sdk';
 
 const kinetiq = new KinetiqClient({
   apiKey: process.env.KINETIQ_API_KEY,
@@ -893,7 +893,7 @@ docker compose up -d --build`,
             {#if codeTab === "sdk"}
               <div class="grid grid-cols-[18px_1fr] gap-x-3">
                 <span class="text-[var(--code-lineno)] select-none text-right">1</span>
-                <div><span class="text-[var(--code-keyword)]">import</span> &#123; <span class="text-[var(--code-entity)]">Kinetiq</span> &#125; <span class="text-[var(--code-keyword)]">from</span> <span class="text-[var(--code-string)]">'@kinetiq/sdk'</span>;</div>
+                <div><span class="text-[var(--code-keyword)]">import</span> &#123; <span class="text-[var(--code-entity)]">Kinetiq</span> &#125; <span class="text-[var(--code-keyword)]">from</span> <span class="text-[var(--code-string)]">'@agpprastyo/kinetiq-sdk'</span>;</div>
                 <span class="text-[var(--code-lineno)] select-none text-right">2</span>
                 <div></div>
                 <span class="text-[var(--code-lineno)] select-none text-right">3</span>
@@ -927,7 +927,7 @@ docker compose up -d --build`,
               <span class="w-1.5 h-1.5 rounded-full bg-[var(--brand-primary)]"></span>
               202 Accepted
             </span>
-            <span class="text-[var(--text-muted)]">@kinetiq/sdk v1.0.0</span>
+            <span class="text-[var(--text-muted)]">@agpprastyo/kinetiq-sdk v1.0.0</span>
           </div>
         </div>
       </div>

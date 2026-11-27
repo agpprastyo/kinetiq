@@ -1,6 +1,9 @@
 {
-  "name": "@kinetiq/sdk",
+  "name": "@agpprastyo/kinetiq-sdk",
   "version": "1.0.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Official lightweight TypeScript/JavaScript SDK for Kinetiq real-time product analytics",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

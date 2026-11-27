@@ -20,7 +20,7 @@
 
   const currentPath = $derived(page.url.pathname);
 
-  const sdkSnippet = `import { KinetiqClient } from '@kinetiq/sdk';
+  const sdkSnippet = `import { KinetiqClient } from '@agpprastyo/kinetiq-sdk';
 
 const kinetiq = new KinetiqClient({
   apiKey: process.env.KINETIQ_API_KEY,
@@ -219,7 +219,7 @@ await kinetiq.track('checkout.completed', {
               {#if snippetTab === "sdk"}
                 <div class="grid grid-cols-[18px_1fr] gap-x-3">
                   <span class="text-[var(--code-lineno)] select-none text-right">1</span>
-                  <div><span class="text-[var(--code-keyword)]">import</span> <span class="text-[var(--code-plain)]">&#123;</span> <span class="text-[var(--code-entity)]">Kinetiq</span> <span class="text-[var(--code-plain)]">&#125;</span> <span class="text-[var(--code-keyword)]">from</span> <span class="text-[var(--code-string)]">'@kinetiq/sdk'</span><span class="text-[var(--code-punct)]">;</span></div>
+                  <div><span class="text-[var(--code-keyword)]">import</span> <span class="text-[var(--code-plain)]">&#123;</span> <span class="text-[var(--code-entity)]">Kinetiq</span> <span class="text-[var(--code-plain)]">&#125;</span> <span class="text-[var(--code-keyword)]">from</span> <span class="text-[var(--code-string)]">'@agpprastyo/kinetiq-sdk'</span><span class="text-[var(--code-punct)]">;</span></div>
 
                   <span class="text-[var(--code-lineno)] select-none text-right">2</span>
                   <div></div>
