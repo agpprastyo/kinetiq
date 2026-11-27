@@ -1,6 +1,11 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { api, toSafeUserMessage, type CreateProjectResponse, type Project } from "$lib/api";
+  import {
+    buildOnboardingSnippets,
+    createFirstEventListener,
+    type OnboardingListenerState
+  } from "$lib/onboarding";
   import Button from "$lib/components/ui/Button.svelte";
   import Badge from "$lib/components/ui/Badge.svelte";
   import Card from "$lib/components/ui/Card.svelte";
@@ -17,7 +22,9 @@
     Code2,
     Globe,
     ShieldCheck,
-    Zap
+    Zap,
+    Radio,
+    RefreshCw
   } from "lucide-svelte";
 
   let name = $state("");
@@ -34,11 +41,56 @@
   let testEventSuccess = $state(false);
   let testEventError = $state("");
 
+  // Live first-event listener state
+  let listenerState = $state<OnboardingListenerState>({
+    status: "idle",
+    receivedEvent: null,
+    error: null
+  });
+  let eventListener: ReturnType<typeof createFirstEventListener> | null = null;
+
+  function onVisibilityChange() {
+    if (typeof document !== "undefined") {
+      eventListener?.handleVisibilityChange(document.hidden);
+    }
+  }
+
+  function startFirstEventListener(projectId: string) {
+    eventListener?.stop();
+    eventListener = createFirstEventListener({
+      fetchLatestEvent: async () => {
+        const events = await api.listCatalogEvents(projectId, "");
+        if (!events || events.length === 0) return null;
+        const latest = [...events].sort(
+          (a, b) => new Date(b.last_seen).getTime() - new Date(a.last_seen).getTime()
+        )[0];
+        return {
+          event_name: latest.event_name,
+          timestamp: latest.last_seen
+        };
+      },
+      onStateChange: (next) => {
+        listenerState = next;
+      }
+    });
+    eventListener.start();
+  }
+
   onMount(async () => {
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    }
     try {
       existingProjects = await api.getProjects();
     } catch {
       // ignore initial check failure
+    }
+  });
+
+  onDestroy(() => {
+    eventListener?.stop();
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     }
   });
 
@@ -66,6 +118,10 @@
     try {
       const res = await api.createProject(trimmed);
       result = res;
+      const projectId = res.project?.id || res.id;
+      if (projectId) {
+        startFirstEventListener(projectId);
+      }
     } catch (err: any) {
       error = toSafeUserMessage(err, "Unable to create project right now.");
     } finally {
@@ -86,57 +142,18 @@
     }
   }
 
+  const ingestEndpoint = $derived(
+    typeof window !== "undefined"
+      ? `${window.location.origin}/api/v1/ingest`
+      : "http://localhost:8080/api/v1/ingest"
+  );
+
   const currentSnippet = $derived.by(() => {
-    const key = result?.api_key || "tlk_live_your_api_key";
-    if (activeTab === "sdk") {
-      return `import { KinetiqClient } from "@agpprastyo/kinetiq-sdk";
-
-const kinetiq = new KinetiqClient({
-  apiKey: "${key}",
-  endpoint: "http://localhost:8080/api/v1/ingest"
-});
-
-// Track user event
-kinetiq.track("page_view", {
-  distinct_id: "usr_100",
-  path: "/pricing",
-  plan: "growth"
-});`;
-    }
-    if (activeTab === "fetch") {
-      return `await fetch("http://localhost:8080/api/v1/ingest", {
-  method: "POST",
-  headers: {
-    "Authorization": "Bearer ${key}",
-    "Content-Type": "application/json"
-  },
-  body: JSON.stringify({
-    events: [
-      {
-        event_id: crypto.randomUUID(),
-        event_name: "page_view",
-        distinct_id: "usr_100",
-        occurred_at: new Date().toISOString(),
-        properties: { path: "/pricing" }
-      }
-    ]
-  })
-});`;
-    }
-    return `curl -X POST http://localhost:8080/api/v1/ingest \\
-  -H "Authorization: Bearer ${key}" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "events": [
-      {
-        "event_id": "evt_sample_01",
-        "event_name": "page_view",
-        "distinct_id": "usr_100",
-        "occurred_at": "${new Date().toISOString()}",
-        "properties": { "path": "/pricing" }
-      }
-    ]
-  }'`;
+    const snippets = buildOnboardingSnippets(
+      result?.api_key || "tlk_live_your_api_key",
+      ingestEndpoint
+    );
+    return snippets[activeTab];
   });
 
   async function copySnippet() {
@@ -348,6 +365,49 @@ kinetiq.track("page_view", {
             </div>
 
             <pre class="p-4 rounded-2xl bg-[var(--bg-surface-muted)] border border-[var(--border-subtle)] text-xs font-mono text-[var(--text-primary)] overflow-x-auto leading-relaxed">{currentSnippet}</pre>
+          </div>
+
+          <!-- Live First-Event Tester -->
+          <div class="p-4 rounded-2xl bg-[var(--bg-surface-muted)] border border-[var(--border-subtle)] space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div class="flex items-center gap-2.5">
+                {#if listenerState.status === "received"}
+                  <Badge variant="emerald" pulse={false}>
+                    <Check class="w-3 h-3 mr-1" />
+                    Event received!
+                  </Badge>
+                {:else if listenerState.status === "timeout"}
+                  <Badge variant="amber">
+                    No events received yet
+                  </Badge>
+                {:else}
+                  <Badge variant="emerald" pulse={true}>
+                    <Radio class="w-3 h-3 mr-1" />
+                    Waiting for first event...
+                  </Badge>
+                {/if}
+              </div>
+
+              {#if listenerState.status === "timeout"}
+                <Button variant="secondary" size="sm" onclick={() => eventListener?.checkAgain()}>
+                  <RefreshCw class="w-3.5 h-3.5" />
+                  Check again
+                </Button>
+              {/if}
+            </div>
+
+            {#if listenerState.status === "received" && listenerState.receivedEvent}
+              <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between gap-3 text-xs">
+                <div class="font-mono font-semibold text-[var(--brand-primary)]">
+                  {listenerState.receivedEvent.event_name}
+                </div>
+                <div class="text-[11px] text-[var(--text-secondary)] font-mono">
+                  {new Date(listenerState.receivedEvent.timestamp).toLocaleString()}
+                </div>
+              </div>
+            {:else if listenerState.error}
+              <p class="text-[11px] text-amber-600 dark:text-amber-400">{listenerState.error}</p>
+            {/if}
           </div>
 
           <div class="p-4 rounded-2xl bg-[var(--bg-surface-muted)] border border-[var(--border-subtle)] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">

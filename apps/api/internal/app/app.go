@@ -156,8 +156,6 @@ func SetupWithContainer(c *Container) *fiber.App {
 
 	// Protected browser session endpoints
 	protected := api.Group("", auth.SessionMiddleware(c.AuthClient))
-	protected.Get("/system/status", auth.RequirePlatformAdmin(), systemStatusHandler(c))
-	app.Get("/api/system/status", auth.SessionMiddleware(c.AuthClient), auth.RequirePlatformAdmin(), systemStatusHandler(c))
 	protected.Post("/projects", c.ProjectHandler.CreateProject)
 	protected.Get("/projects", c.ProjectHandler.ListProjects)
 	protected.Get("/projects/:projectID", c.ProjectHandler.GetProject)
