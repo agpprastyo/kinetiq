@@ -64,7 +64,7 @@
   let sendingInvite = $state(false);
   let copiedInviteId = $state<string | null>(null);
 
-  // General & Billing form states
+  // General form states
   let wsName = $state("");
   let wsSlug = $state("");
   let savingWorkspace = $state(false);
@@ -335,7 +335,7 @@
         class="px-4 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 {activeSection === 'general' ? 'bg-[var(--brand-primary)] text-white' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
       >
         <CreditCard class="w-3.5 h-3.5" />
-        Organization & Billing
+        Organization
       </button>
     </div>
   </div>

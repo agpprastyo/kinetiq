@@ -410,7 +410,7 @@
 
           <a
             href="/app/settings"
-            title="Workspace: Settings, Team RBAC & Billing"
+            title="Workspace: Settings & Team RBAC"
             class="w-10 h-10 rounded-full flex items-center justify-center transition-all {isWorkspaceSettingsActive ? 'bg-[var(--brand-primary)] text-white' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-muted)]'}"
           >
             <Building2 class="w-4 h-4" />
