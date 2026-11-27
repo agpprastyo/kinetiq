@@ -26,7 +26,7 @@ docker compose pull
 docker compose up -d --build
 ```
 
-Persistent data is stored in Docker volumes (including `kinetiq_secrets` and container data volumes), so your database and Redis state are preserved across container recreations.
+Persistent data is stored in Docker volumes (`kinetiq_postgres_data`, `kinetiq_redis_data`, and `kinetiq_secrets`), so your database and Redis state are preserved across container recreations.
 
 ---
 
@@ -68,7 +68,7 @@ If an upgrade encounters an issue:
    ```
 3. If a migration changed the schema, restore your pre-upgrade database backup:
    ```bash
-   docker compose up -d postgres
+   docker compose up -d kinetiq-db
    ./scripts/restore-postgres.sh --file /var/backups/kinetiq/<backup-file>.dump
    ```
 4. Start the remaining services:

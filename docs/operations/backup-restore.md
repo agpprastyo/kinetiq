@@ -66,8 +66,8 @@ If you prefer running `pg_dump` directly against the `kinetiq-postgres` containe
 
 ```bash
 # Backup
-docker compose exec -T postgres pg_dump -U kinetiq -Fc kinetiq > kinetiq_backup.dump
+docker compose exec -T kinetiq-db pg_dump -U kinetiq -Fc kinetiq > kinetiq_backup.dump
 
 # Restore
-cat kinetiq_backup.dump | docker compose exec -T postgres pg_restore -U kinetiq -d kinetiq --clean --if-exists
+cat kinetiq_backup.dump | docker compose exec -T kinetiq-db pg_restore -U kinetiq -d kinetiq --clean --if-exists
 ```
