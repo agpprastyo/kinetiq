@@ -1199,33 +1199,6 @@ export interface GeoBreakdownItem {
   count: number;
 }
 
-export interface SystemStatusResponse {
-  postgres: {
-    status: "healthy" | "degraded" | string;
-    latency_ms: number;
-    open_connections: number;
-  };
-  redis: {
-    status: "healthy" | "degraded" | string;
-    latency_ms: number;
-    used_memory_human: string;
-  };
-  queue: {
-    stream_length: number;
-    pending_pel_count: number;
-    consumer_lag: number;
-  };
-  ingestion: {
-    events_per_sec_1m: number;
-    events_total_24h: number;
-  };
-}
-
-export const systemStatusApi = {
-  get: () => request<SystemStatusResponse>("/system/status")
-};
-
-
 
 
 

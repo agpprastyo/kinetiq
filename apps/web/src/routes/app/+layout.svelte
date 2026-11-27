@@ -328,15 +328,9 @@
             </a>
             <a
               href="/app/settings"
-              class="px-4 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap {isWorkspaceSettingsActive && !pathname.startsWith('/app/settings/status') ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] font-semibold shadow-xs' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
+              class="px-4 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap {isWorkspaceSettingsActive ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] font-semibold shadow-xs' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
             >
               Workspace Settings
-            </a>
-            <a
-              href="/app/settings/status"
-              class="px-4 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap {pathname.startsWith('/app/settings/status') ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] font-semibold shadow-xs' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
-            >
-              System Status
             </a>
           {/if}
         </nav>
