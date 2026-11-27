@@ -4,6 +4,10 @@
   "publishConfig": {
     "access": "public"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agpprastyo/kinetiq"
+  },
   "description": "Official lightweight TypeScript/JavaScript SDK for Kinetiq real-time product analytics",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
