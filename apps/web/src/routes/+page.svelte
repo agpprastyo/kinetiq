@@ -433,8 +433,8 @@ docker compose up -d --build`,
 
           <p class="text-sm sm:text-[15px] text-[var(--text-secondary)] leading-relaxed">
             {lang === "id"
-              ? "Kinetiq merekam kunjungan halaman, pendaftaran akun, dan konversi pembayaran secara langsung. Gunakan lewat Kinetiq Cloud atau pasang gratis di server Anda sendiri."
-              : "Kinetiq captures page views, signups, and checkout conversions in real time. Run on managed Kinetiq Cloud or self-host on your own server with one command."}
+              ? "Kinetiq merekam kunjungan halaman, pendaftaran akun, dan konversi pembayaran secara langsung. Pasang gratis di server Anda sendiri dengan satu perintah."
+              : "Kinetiq captures page views, signups, and checkout conversions in real time. Self-host on your own server with one command."}
           </p>
 
           <!-- Action Buttons -->
@@ -932,8 +932,6 @@ docker compose up -d --build`,
         </div>
       </div>
     </section>
-
-    <!-- SECTION 04: ARCHITECTURAL PRICING MATRIX -->
   </main>
 
   <!-- Minimal Architectural Footer -->
@@ -941,7 +939,7 @@ docker compose up -d --build`,
     <div class="flex items-center gap-2">
       <span class="font-bold text-[var(--text-primary)]">Kinetiq Analytics</span>
       <span>·</span>
-      <span class="font-mono">Cloud & Self-Hosted Product Analytics</span>
+      <span class="font-mono">Self-Hosted Product Analytics</span>
     </div>
 
     <div class="flex items-center gap-5">
