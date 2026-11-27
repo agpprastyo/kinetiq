@@ -1,0 +1,94 @@
+name: Project Board Automation
+
+on:
+  pull_request:
+    types: [opened, closed]
+    branches: [master, main]
+
+jobs:
+  update-project-status:
+    name: Sync Issue Status with PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Update Project Status on PR Event
+        env:
+          # PROJECT_TOKEN (PAT with `project` scope) is required to move User Project v2 items.
+          # Without it we still post the issue comment via GITHUB_TOKEN.
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN || secrets.GITHUB_TOKEN }}
+          HAS_PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN != '' }}
+          COMMENT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_ACTION: ${{ github.event.action }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          echo "PR #$PR_NUMBER ($PR_HEAD_REF) action=$PR_ACTION merged=$PR_MERGED"
+
+          if [[ "$PR_ACTION" == "closed" && "$PR_MERGED" != "true" ]]; then
+            echo "PR closed without merge. Nothing to do."
+            exit 0
+          fi
+
+          # Look for refs/closes/fixes/resolves #<number> pattern
+          ISSUES=$(echo "$PR_BODY" | grep -ioE '(ref|refs|close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved) #[0-9]+' | grep -oE '[0-9]+' | sort -u || true)
+
+          if [[ -z "$ISSUES" ]]; then
+            echo "No linked issues found in PR description."
+            exit 0
+          fi
+          echo "Detected linked issues: $ISSUES"
+
+          if [[ "$HAS_PROJECT_TOKEN" != "true" ]]; then
+            echo "::warning::PROJECT_TOKEN secret (PAT with 'project' scope) is not set; cannot move User Project v2 items. Posting issue comments only."
+          fi
+
+          # Project 8 (PVT_kwHOBZmvYs4BoYAR) status field & option IDs
+          PROJECT_ID="PVT_kwHOBZmvYs4BoYAR"
+          STATUS_FIELD="PVTSSF_lAHOBZmvYs4BoYARzhm4aZc"
+          IN_PROGRESS_OPT="f8ca15d5"
+          QA_VERIFICATION_OPT="d46216c2"
+          DONE_OPT="ab4751eb"
+
+          if [[ "$PR_ACTION" == "opened" ]]; then
+            TARGET_OPT="$IN_PROGRESS_OPT"
+            TARGET_NAME="In Progress (Coding)"
+            COMMENT="PR #$PR_NUMBER opened -> $TARGET_NAME ($PR_URL)"
+          elif [[ "$PR_TITLE" == docs\(* ]]; then
+            TARGET_OPT="$DONE_OPT"
+            TARGET_NAME="Done"
+            COMMENT="PR #$PR_NUMBER merged -> $TARGET_NAME (${PR_MERGE_SHA:-no merge sha}) $PR_URL"
+          else
+            TARGET_OPT="$QA_VERIFICATION_OPT"
+            TARGET_NAME="QA & Verification"
+            COMMENT="PR #$PR_NUMBER merged -> $TARGET_NAME (${PR_MERGE_SHA:-no merge sha}) $PR_URL"
+          fi
+
+          for ISSUE_NUM in $ISSUES; do
+            echo "Processing Issue #$ISSUE_NUM -> $TARGET_NAME"
+
+            # Comment always goes through GITHUB_TOKEN so it works without PROJECT_TOKEN.
+            GH_TOKEN="$COMMENT_TOKEN" gh issue comment "$ISSUE_NUM" -R "${{ github.repository }}" --body "$COMMENT" \
+              || echo "::warning::Failed to comment on issue #$ISSUE_NUM"
+
+            [[ "$HAS_PROJECT_TOKEN" == "true" ]] || continue
+
+            ITEM_ID=$(gh project item-list 8 --owner agpprastyo --limit 100 --format json \
+              --jq ".items[] | select(.content.number == $ISSUE_NUM) | .id" || true)
+
+            if [[ -z "$ITEM_ID" ]]; then
+              echo "::warning::Issue #$ISSUE_NUM not found in Project 8 (or token lacks project access). Skipping move."
+              continue
+            fi
+
+            gh project item-edit --id "$ITEM_ID" --project-id "$PROJECT_ID" \
+              --field-id "$STATUS_FIELD" --single-select-option-id "$TARGET_OPT" \
+              || echo "::warning::Failed to move issue #$ISSUE_NUM to $TARGET_NAME"
+          done
