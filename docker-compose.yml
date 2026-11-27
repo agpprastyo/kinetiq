@@ -34,23 +34,55 @@ services:
       timeout: 3s
       retries: 5
 
+  kinetiq-init:
+    image: alpine:3.20
+    container_name: kinetiq-init
+    entrypoint: ["/entrypoint-secrets.sh"]
+    environment:
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
+      INTERNAL_AUTH_SECRET: ${INTERNAL_AUTH_SECRET:-}
+    volumes:
+      - kinetiq_secrets:/run/kinetiq-secrets
+      - ./docker/entrypoint-secrets.sh:/entrypoint-secrets.sh:ro
+
+  kinetiq-migrate:
+    image: migrate/migrate:v4.17.1
+    container_name: kinetiq-migrate
+    volumes:
+      - ./migrations/app:/migrations:ro
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://${POSTGRES_USER:-kinetiq}:${POSTGRES_PASSWORD:-kinetiq_secure_password}@kinetiq-db:5432/${POSTGRES_DB:-kinetiq}?sslmode=disable"
+      - "up"
+    depends_on:
+      kinetiq-db:
+        condition: service_healthy
+
   kinetiq-auth:
     build:
       context: .
       dockerfile: apps/auth/Dockerfile
     container_name: kinetiq-auth
     restart: unless-stopped
+    entrypoint: ["/entrypoint-secrets.sh", "bun", "run", "src/index.ts"]
     environment:
       DATABASE_URL: "postgres://${POSTGRES_USER:-kinetiq}:${POSTGRES_PASSWORD:-kinetiq_secure_password}@kinetiq-db:5432/${POSTGRES_DB:-kinetiq}?sslmode=disable"
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-changeme_better_auth_secret_kinetiq}
-      INTERNAL_AUTH_SECRET: ${INTERNAL_AUTH_SECRET:-changeme_internal_secret_kinetiq}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
+      INTERNAL_AUTH_SECRET: ${INTERNAL_AUTH_SECRET:-}
       AUTH_BASE_URL: ${AUTH_BASE_URL:-http://localhost:3001}
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+    volumes:
+      - kinetiq_secrets:/run/kinetiq-secrets:ro
+      - ./docker/entrypoint-secrets.sh:/entrypoint-secrets.sh:ro
     ports:
       - "3001:3001"
     depends_on:
       kinetiq-db:
         condition: service_healthy
+      kinetiq-migrate:
+        condition: service_completed_successfully
+      kinetiq-init:
+        condition: service_completed_successfully
 
   kinetiq-api:
     build:
@@ -58,15 +90,19 @@ services:
       dockerfile: apps/api/Dockerfile
     container_name: kinetiq-api
     restart: unless-stopped
-    command: ["/app/kinetiq-api"]
+    entrypoint: ["/entrypoint-secrets.sh", "/app/kinetiq-api"]
     environment:
       PORT: 8080
       DATABASE_URL: "postgres://${POSTGRES_USER:-kinetiq}:${POSTGRES_PASSWORD:-kinetiq_secure_password}@kinetiq-db:5432/${POSTGRES_DB:-kinetiq}?sslmode=disable"
       REDIS_URL: "redis://kinetiq-redis:6379"
       AUTH_BASE_URL: "http://kinetiq-auth:3001"
-      AUTH_INTERNAL_SECRET: ${INTERNAL_AUTH_SECRET:-changeme_internal_secret_kinetiq}
+      AUTH_INTERNAL_SECRET: ${INTERNAL_AUTH_SECRET:-}
+      PUBLIC_APP_URL: ${PUBLIC_API_URL:-http://localhost:8080}
       RATE_LIMIT_RPS: 500
       RATE_LIMIT_BURST: 1000
+    volumes:
+      - kinetiq_secrets:/run/kinetiq-secrets:ro
+      - ./docker/entrypoint-secrets.sh:/entrypoint-secrets.sh:ro
     ports:
       - "8080:8080"
     depends_on:
@@ -74,6 +110,10 @@ services:
         condition: service_healthy
       kinetiq-redis:
         condition: service_healthy
+      kinetiq-migrate:
+        condition: service_completed_successfully
+      kinetiq-init:
+        condition: service_completed_successfully
 
   kinetiq-worker:
     build:
@@ -81,19 +121,26 @@ services:
       dockerfile: apps/api/Dockerfile
     container_name: kinetiq-worker
     restart: unless-stopped
-    command: ["/app/kinetiq-worker"]
+    entrypoint: ["/entrypoint-secrets.sh", "/app/kinetiq-worker"]
     environment:
       DATABASE_URL: "postgres://${POSTGRES_USER:-kinetiq}:${POSTGRES_PASSWORD:-kinetiq_secure_password}@kinetiq-db:5432/${POSTGRES_DB:-kinetiq}?sslmode=disable"
       REDIS_URL: "redis://kinetiq-redis:6379"
       AUTH_BASE_URL: "http://kinetiq-auth:3001"
-      AUTH_INTERNAL_SECRET: ${INTERNAL_AUTH_SECRET:-changeme_internal_secret_kinetiq}
+      AUTH_INTERNAL_SECRET: ${INTERNAL_AUTH_SECRET:-}
       WORKER_BATCH_SIZE: 500
       WORKER_FLUSH_INTERVAL: 1s
+    volumes:
+      - kinetiq_secrets:/run/kinetiq-secrets:ro
+      - ./docker/entrypoint-secrets.sh:/entrypoint-secrets.sh:ro
     depends_on:
       kinetiq-db:
         condition: service_healthy
       kinetiq-redis:
         condition: service_healthy
+      kinetiq-migrate:
+        condition: service_completed_successfully
+      kinetiq-init:
+        condition: service_completed_successfully
 
   kinetiq-web:
     build:
@@ -113,3 +160,4 @@ services:
 volumes:
   kinetiq_postgres_data:
   kinetiq_redis_data:
+  kinetiq_secrets:

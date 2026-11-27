@@ -154,11 +154,17 @@ func requireEnv(d doctorDeps, key, cat, name string) (string, []CheckResult) {
 func checkEnv(d doctorDeps) []CheckResult {
 	var out []CheckResult
 	for _, k := range []string{"DATABASE_URL", "REDIS_URL", "AUTH_BASE_URL", "AUTH_INTERNAL_SECRET", "PUBLIC_APP_URL"} {
-		if d.Getenv(k) == "" {
+		v := d.Getenv(k)
+		if v == "" {
 			out = append(out, res("env", k, StatusFail, "not set", "Set "+k+" in .env or the container environment"))
+		} else if k == "AUTH_INTERNAL_SECRET" && (strings.HasPrefix(v, "changeme_") || len(v) < 32) {
+			out = append(out, res("env", k, StatusWarn, "weak or default secret", "Generate a 32+ char secret with: openssl rand -hex 32"))
 		} else {
 			out = append(out, res("env", k, StatusPass, "set", ""))
 		}
+	}
+	if v := d.Getenv("BETTER_AUTH_SECRET"); v != "" && (strings.HasPrefix(v, "changeme_") || len(v) < 32) {
+		out = append(out, res("env", "BETTER_AUTH_SECRET", StatusWarn, "weak or default secret", "Generate a 32+ char secret with: openssl rand -hex 32"))
 	}
 	return out
 }

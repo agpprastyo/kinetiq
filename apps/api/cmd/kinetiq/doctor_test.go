@@ -17,7 +17,7 @@ func healthyDeps() doctorDeps {
 		"DATABASE_URL":         "postgres://u@db/x",
 		"REDIS_URL":            "redis://r",
 		"AUTH_BASE_URL":        "http://auth:3001",
-		"AUTH_INTERNAL_SECRET": "s",
+		"AUTH_INTERNAL_SECRET": strings.Repeat("a", 32),
 		"PUBLIC_APP_URL":       "https://example.com",
 	}
 	d := doctorDeps{
@@ -107,6 +107,15 @@ func TestDoctorFailures(t *testing.T) {
 		}, "system", "Container engine", StatusFail},
 		{"port busy", func(d *doctorDeps) { d.PortFree = func(p int) bool { return p != 443 } }, "ports", "Port 443", StatusWarn},
 		{"missing env", func(d *doctorDeps) { d.Getenv = func(string) string { return "" } }, "env", "DATABASE_URL", StatusFail},
+		{"weak secret", func(d *doctorDeps) {
+			orig := d.Getenv
+			d.Getenv = func(k string) string {
+				if k == "AUTH_INTERNAL_SECRET" {
+					return "changeme_internal_secret_kinetiq"
+				}
+				return orig(k)
+			}
+		}, "env", "AUTH_INTERNAL_SECRET", StatusWarn},
 		{"db down", func(d *doctorDeps) {
 			d.PGQuery = func(context.Context, string, string) (string, error) { return "", errors.New("refused") }
 		}, "database", "Connection", StatusFail},
