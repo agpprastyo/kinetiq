@@ -40,7 +40,7 @@ Kinetiq uses a decoupled, event-driven architecture designed to withstand sudden
 ```mermaid
 flowchart TD
     subgraph Clients["Data Sources"]
-        Browser["Web / Mobile Apps<br/>(@kinetiq/sdk)"]
+        Browser["Web / Mobile Apps<br/>(@agpprastyo/kinetiq-sdk)"]
         Backend["Backend Services<br/>(HTTP REST API)"]
     end
 
@@ -114,17 +114,17 @@ Open [http://localhost:3000](http://localhost:3000) in your browser and register
 
 ## 📦 Client SDK Quick Usage
 
-Integrate telemetry into your frontend or Node.js applications with the official `@kinetiq/sdk`:
+Integrate telemetry into your frontend or Node.js applications with the official `@agpprastyo/kinetiq-sdk`:
 
 ```bash
-bun add @kinetiq/sdk
-# or: npm install @kinetiq/sdk
+bun add @agpprastyo/kinetiq-sdk
+# or: npm install @agpprastyo/kinetiq-sdk
 ```
 
 ### Initialize and Track Events
 
 ```typescript
-import { Kinetiq } from "@kinetiq/sdk";
+import { Kinetiq } from "@agpprastyo/kinetiq-sdk";
 
 // Initialize client
 const kinetiq = new Kinetiq({

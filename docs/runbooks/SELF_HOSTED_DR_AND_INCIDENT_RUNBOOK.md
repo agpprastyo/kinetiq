@@ -119,7 +119,7 @@ docker compose -f deploy/backup/docker-compose.backup.yml up -d
    ```
 2. **Impact**:
    - Analytics queries bypass cache and hit PostgreSQL directly (higher read latency).
-   - `/api/v1/ingest` returns `503 Service Unavailable` (`queue_unavailable`); SDK clients (`@kinetiq/sdk`) automatically buffer and retry events with exponential backoff.
+   - `/api/v1/ingest` returns `503 Service Unavailable` (`queue_unavailable`); SDK clients (`@agpprastyo/kinetiq-sdk`) automatically buffer and retry events with exponential backoff.
 3. **Mitigate**:
    - Restart Redis (`docker compose restart kinetiq-redis`). If AOF is truncated, run `redis-check-aof --fix /data/appendonly.aof` before restart.
 

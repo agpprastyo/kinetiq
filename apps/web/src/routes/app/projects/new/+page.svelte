@@ -89,7 +89,7 @@
   const currentSnippet = $derived.by(() => {
     const key = result?.api_key || "tlk_live_your_api_key";
     if (activeTab === "sdk") {
-      return `import { KinetiqClient } from "@kinetiq/sdk";
+      return `import { KinetiqClient } from "@agpprastyo/kinetiq-sdk";
 
 const kinetiq = new KinetiqClient({
   apiKey: "${key}",
@@ -312,7 +312,7 @@ kinetiq.track("page_view", {
                   class="px-3 py-1 rounded-full text-xs font-medium transition-all cursor-pointer {activeTab === 'sdk' ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] font-semibold shadow-xs' : 'text-[var(--text-secondary)]'}"
                 >
                   <Code2 class="w-3 h-3 inline mr-1" />
-                  @kinetiq/sdk
+                  @agpprastyo/kinetiq-sdk
                 </button>
                 <button
                   type="button"

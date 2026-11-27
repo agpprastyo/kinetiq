@@ -623,7 +623,7 @@
             {#if firstEventDetected}
               Event ingest pertama berhasil diverifikasi lewat real-time SSE engine. Dashboard Anda siap menyajikan visualisasi data mendalam.
             {:else}
-              Kirim event pertama menggunakan <code class="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">@kinetiq/sdk</code> atau cURL berikut. Halaman ini akan otomatis terupdate secara langsung begitu data masuk:
+              Kirim event pertama menggunakan <code class="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">@agpprastyo/kinetiq-sdk</code> atau cURL berikut. Halaman ini akan otomatis terupdate secara langsung begitu data masuk:
             {/if}
           </p>
 
