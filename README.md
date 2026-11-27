@@ -10,7 +10,7 @@
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker)](docker-compose.yml)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-[Quickstart](#-60-second-quickstart) • [Architecture](#-architecture) • [SDK Integration](#-client-sdk-quick-usage) • [API Reference](#-api-endpoints) • [Contributing](#-contributing)
+[Quickstart](docs/quickstart.md) • [SDK Guide](docs/sdk.md) • [Backup & Restore](docs/operations/backup-restore.md) • [Upgrade](docs/operations/upgrade.md) • [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -18,29 +18,27 @@
 
 ## 📌 Overview
 
-**Kinetiq** is a self-hostable event ingestion and product telemetry platform engineered for high throughput, sub-millisecond response latency, and complete data sovereignty.
+**Kinetiq** is a self-hosted event ingestion and product telemetry platform engineered for high throughput, sub-millisecond response latency, and complete data sovereignty.
 
-Whether you are tracking website pageviews, mobile user interactions, SaaS product conversions, or distributed IoT heartbeats, Kinetiq gives you deep visibility without sending customer data to third-party ad networks.
+Whether you are tracking website pageviews, mobile user interactions, SaaS product conversions, or distributed service events, Kinetiq gives you full visibility on your own infrastructure without sending customer data to third-party networks.
 
 ### ✨ Key Capabilities
 
-- 🚀 **High-Throughput Ingestion**: Powered by Go and Fiber, delivering over 10,000+ RPS on standard compute instances with non-blocking Redis Stream queueing.
-- 📊 **Real-Time Analytics & Funnels**: Measure user retention, conversion funnels, top events, active devices, and geolocation distribution instantly.
-- 🔒 **Self-Hosted Data Sovereignty**: 100% of your telemetry stays on your servers (PostgreSQL / TimescaleDB), fully GDPR/CCPA compliant by design.
-- 🎨 **Modern Bento Dashboard**: Sleek SvelteKit 5 web interface featuring real-time stream inspector, interactive graphs, and dark/light modes.
-- 📦 **Multi-Tenant RBAC & API Keys**: Granular project scoped API keys (`tlk_live_...`), team invitations, and role-based permissions.
+- 🚀 **High-Throughput Ingestion**: Powered by Go and Fiber with non-blocking Redis Streams queueing.
+- 📊 **Real-Time Analytics & Funnels**: Measure user retention, conversion funnels, top events, active devices, and geolocation distribution.
+- 🔒 **Self-Hosted Data Sovereignty**: 100% of your telemetry stays on your servers (PostgreSQL / TimescaleDB).
+- 🎨 **Modern Bento Dashboard**: SvelteKit 5 web interface featuring real-time stream inspector, interactive graphs, and dark/light modes.
+- 📦 **Multi-Tenant RBAC & API Keys**: Project-scoped API keys (`tlk_live_...`), team invitations, and role-based permissions.
 - 🔔 **Multi-Channel Alerting & Webhooks**: Native webhooks with HMAC signatures, Discord/Slack webhooks, and automatic retry circuit breaker.
 
 ---
 
 ## 🏗️ Architecture
 
-Kinetiq uses a decoupled, event-driven architecture designed to withstand sudden ingestion spikes without dropping events:
-
 ```mermaid
 flowchart TD
     subgraph Clients["Data Sources"]
-        Browser["Web / Mobile Apps<br/>(@agpprastyo/kinetiq-sdk)"]
+        Browser["Web / Node / Bun Apps<br/>(@agpprastyo/kinetiq-sdk)"]
         Backend["Backend Services<br/>(HTTP REST API)"]
     end
 
@@ -77,30 +75,27 @@ flowchart TD
 
 ---
 
-## 🚀 60-Second Quickstart
+## 🚀 60-Second Self-Hosted Quickstart
 
-Deploy the complete Kinetiq stack locally or on your server using Docker Compose:
-
-### 1. Clone the repository
+Deploy the complete Kinetiq stack using Docker Compose:
 
 ```bash
+# 1. Clone the repository
 git clone https://github.com/agpprastyo/kinetiq.git
 cd kinetiq
-```
 
-### 2. Configure environment variables
-
-```bash
+# 2. Configure environment variables
 cp .env.example .env
-```
 
-### 3. Launch with Docker Compose
-
-```bash
+# 3. Launch all services
 docker compose up -d
+
+# 4. Verify stack health
+kinetiq doctor
+# or: make status
 ```
 
-### 4. Access Kinetiq
+Once running, open **[http://localhost:3000](http://localhost:3000)** in your browser, register your administrator account, and create your first project.
 
 | Service | URL | Default Purpose |
 | --- | --- | --- |
@@ -108,35 +103,34 @@ docker compose up -d
 | **Ingestion API** | [http://localhost:8080](http://localhost:8080) | High-speed event telemetry endpoint |
 | **Auth Service** | [http://localhost:3001](http://localhost:3001) | User sessions and authentication sidecar |
 
-Open [http://localhost:3000](http://localhost:3000) in your browser and register your administrator account to create your first project.
+👉 See the full **[Self-Hosted Quickstart Guide](docs/quickstart.md)** for production `.env` secrets, first event walkthrough, and troubleshooting.
 
 ---
 
 ## 📦 Client SDK Quick Usage
 
-Integrate telemetry into your frontend or Node.js applications with the official `@agpprastyo/kinetiq-sdk`:
+Install the official `@agpprastyo/kinetiq-sdk`:
 
 ```bash
 bun add @agpprastyo/kinetiq-sdk
-# or: npm install @agpprastyo/kinetiq-sdk
+# or
+npm install @agpprastyo/kinetiq-sdk
 ```
 
-### Initialize and Track Events
+Initialize the client and send your first event:
 
 ```typescript
-import { Kinetiq } from "@agpprastyo/kinetiq-sdk";
+import { KinetiqClient } from "@agpprastyo/kinetiq-sdk";
 
-// Initialize client
-const kinetiq = new Kinetiq({
-  endpoint: "http://localhost:8080", // Your Kinetiq API URL
+const kinetiq = new KinetiqClient({
+  endpoint: "http://localhost:8080",
   apiKey: "tlk_live_your_project_api_key_here",
 });
 
-// Track page views or custom user actions
+// Track custom user actions
 kinetiq.track("button_click", {
   button_id: "hero-cta",
   screen: "landing_page",
-  plan_interest: "pro",
 });
 
 // Identify logged-in users
@@ -146,37 +140,17 @@ kinetiq.identify("user_10293", {
 });
 ```
 
+👉 See the **[SDK & Ingestion Guide](docs/sdk.md)** for batching, offline storage, autocapture, and `curl` REST API examples.
+
 ---
 
-## 🔌 API Endpoints
+## 📚 Documentation
 
-### Ingestion API (Authenticated via Project API Key)
-
-#### `POST /api/v1/ingest`
-Header: `Authorization: Bearer <API_KEY>`
-
-```json
-[
-  {
-    "event": "order_completed",
-    "user_id": "usr_99812",
-    "properties": {
-      "currency": "USD",
-      "amount": 49.99,
-      "items_count": 2
-    },
-    "timestamp": "2026-11-03T20:15:30Z"
-  }
-]
-```
-
-### Analytics Endpoints (Protected by User Session)
-
-- `GET /api/v1/projects/:id/analytics/summary` — Event counts, unique users, and time-range comparison.
-- `GET /api/v1/projects/:id/analytics/timeline` — Time-bucketed volume series.
-- `GET /api/v1/projects/:id/analytics/breakdown` — Device, OS, browser, and country distribution.
-- `GET /api/v1/projects/:id/analytics/funnels` — Multi-step conversion dropoff funnel analysis.
-- `GET /api/v1/projects/:id/live` — Server-Sent Events (SSE) real-time event tail.
+- **[Self-Hosted Quickstart](docs/quickstart.md)** — Clone, `.env` setup, Docker Compose, `kinetiq doctor`, and first event.
+- **[SDK & Ingestion API](docs/sdk.md)** — `@agpprastyo/kinetiq-sdk` usage and `POST /api/v1/ingest` reference.
+- **[Backup & Restore](docs/operations/backup-restore.md)** — Automated PostgreSQL backups (`scripts/backup-postgres.sh`) and point-in-time restore (`scripts/restore-postgres.sh`).
+- **[Upgrade Guide](docs/operations/upgrade.md)** — Zero-data-loss container upgrades and automatic migrations.
+- **[DR & Incident Runbook](docs/runbooks/SELF_HOSTED_DR_AND_INCIDENT_RUNBOOK.md)** — Disaster recovery and incident response procedures.
 
 ---
 
@@ -185,15 +159,17 @@ Header: `Authorization: Bearer <API_KEY>`
 ```text
 kinetiq/
 ├── apps/
-│   ├── api/             # Go Fiber telemetry ingestion & analytics engine
+│   ├── api/             # Go Fiber telemetry ingestion, worker & CLI
 │   ├── auth/            # Better-Auth TypeScript authentication sidecar
-│   └── web/             # SvelteKit 5 modern Bento dashboard
+│   └── web/             # SvelteKit 5 Bento dashboard
 ├── packages/
-│   └── sdk/             # Official TypeScript/JavaScript client SDK
-├── deploy/              # Production deployment templates & helm/compose
+│   └── sdk/             # Official TypeScript/JavaScript client SDK (@agpprastyo/kinetiq-sdk)
+├── deploy/              # Production deployment templates
 ├── docker/              # PostgreSQL initializers & container configurations
+├── docs/                # Self-hosted documentation & operational runbooks
 ├── migrations/          # Versioned SQL database migrations
-└── docker-compose.yml   # 1-click self-hosted compose file
+├── scripts/             # Backup, restore, and verification scripts
+└── docker-compose.yml   # Self-hosted Docker Compose stack
 ```
 
 ---
