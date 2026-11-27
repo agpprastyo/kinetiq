@@ -1,0 +1,955 @@
+openapi: 3.0.3
+info:
+  title: Kinetiq Public API
+  version: 1.0.0
+  description: |
+    Official OpenAPI specification for Kinetiq Community Edition (CE) public endpoints.
+    Covers event ingestion, person identity, project and API key management,
+    product analytics queries, live event streaming, data export, and healthchecks.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: https://api.example.com
+    description: Self-hosted Kinetiq API server
+
+tags:
+  - name: Health
+    description: Service liveness and readiness probes
+  - name: Ingestion
+    description: Event ingestion and person identity endpoints (API Key authenticated)
+  - name: Projects
+    description: Project and API key management (Session/Bearer authenticated)
+  - name: Analytics
+    description: Product analytics, funnels, retention, sessions, and catalog queries
+  - name: Export
+    description: Live event streaming (SSE) and event data export
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Project ingestion API key (e.g. `sp_live_...`).
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Session or JWT bearer token for dashboard/management endpoints.
+
+  parameters:
+    ProjectID:
+      name: projectID
+      in: path
+      required: true
+      description: Project UUID
+      schema:
+        type: string
+        format: uuid
+        example: a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+    KeyID:
+      name: keyID
+      in: path
+      required: true
+      description: API Key UUID
+      schema:
+        type: string
+        format: uuid
+    DistinctIDPath:
+      name: distinctId
+      in: path
+      required: true
+      description: User distinct identifier
+      schema:
+        type: string
+        example: user_12345
+    FromDate:
+      name: from
+      in: query
+      required: false
+      description: Start date/time (ISO-8601)
+      schema:
+        type: string
+        format: date-time
+    ToDate:
+      name: to
+      in: query
+      required: false
+      description: End date/time (ISO-8601)
+      schema:
+        type: string
+        format: date-time
+
+  schemas:
+    ErrorDetail:
+      type: object
+      properties:
+        field:
+          type: string
+          example: event_name
+        message:
+          type: string
+          example: is required
+    ErrorEnvelope:
+      type: object
+      required:
+        - success
+        - error
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: Validation failed
+            details:
+              type: array
+              items:
+                $ref: '#/components/schemas/ErrorDetail'
+
+    EventPayload:
+      type: object
+      required:
+        - event_id
+        - event_name
+      properties:
+        event_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          example: evt_01J9X8K7M2N3P4Q5R6S7T8U9V0
+        event_name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          example: page_view
+        occurred_at:
+          type: string
+          format: date-time
+          example: "2026-10-14T12:00:00Z"
+        distinct_id:
+          type: string
+          maxLength: 128
+          example: user_12345
+        properties:
+          type: object
+          additionalProperties: true
+          example:
+            path: /pricing
+            referrer: https://google.com
+
+    BatchIngestRequest:
+      type: object
+      required:
+        - events
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/EventPayload'
+
+    IngestResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: accepted
+        accepted:
+          type: integer
+          example: 1
+        rejected:
+          type: integer
+          example: 0
+
+    IdentifyRequest:
+      type: object
+      required:
+        - distinct_id
+      properties:
+        distinct_id:
+          type: string
+          example: user_12345
+        anonymous_id:
+          type: string
+          example: anon_98765
+        $set:
+          type: object
+          additionalProperties: true
+          example:
+            email: alice@example.com
+            plan: pro
+        $set_once:
+          type: object
+          additionalProperties: true
+          example:
+            signup_source: organic
+
+    AliasRequest:
+      type: object
+      required:
+        - distinct_id
+        - alias
+      properties:
+        distinct_id:
+          type: string
+          example: user_12345
+        alias:
+          type: string
+          example: legacy_user_99
+
+    PersonResponse:
+      type: object
+      properties:
+        person_id:
+          type: string
+          format: uuid
+        is_identified:
+          type: boolean
+        properties:
+          type: object
+          additionalProperties: true
+
+    CreateProjectRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: My Web App
+
+    UpdateProjectRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: My Updated App
+
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+        name:
+          type: string
+          example: My Web App
+        status:
+          type: string
+          example: active
+        created_at:
+          type: string
+          format: date-time
+        api_key:
+          type: string
+          description: Returned only upon project creation or key rotation
+          example: sp_live_example_key_placeholder
+
+    CreateAPIKeyRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: Production Web SDK
+        environment:
+          type: string
+          enum: [live, test]
+          default: live
+          example: live
+
+    APIKey:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        environment:
+          type: string
+        prefix:
+          type: string
+          example: sp_live_abcd
+        created_at:
+          type: string
+          format: date-time
+
+  responses:
+    BadRequest:
+      description: Invalid request payload or parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Unauthorized:
+      description: Missing or invalid authentication credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Forbidden:
+      description: Insufficient permissions to access this resource
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    TooManyRequests:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Liveness check
+      operationId: getHealthz
+      security: []
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /readyz:
+    get:
+      tags: [Health]
+      summary: Readiness check
+      operationId: getReadyz
+      security: []
+      responses:
+        '200':
+          description: Service and dependencies are ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ready
+        '503':
+          description: Service dependencies unavailable
+
+  /api/v1/ingest:
+    post:
+      tags: [Ingestion]
+      summary: Ingest single or batch events
+      operationId: ingestEvents
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/EventPayload'
+                - $ref: '#/components/schemas/BatchIngestRequest'
+      responses:
+        '202':
+          description: Events accepted for asynchronous processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/identify:
+    post:
+      tags: [Ingestion]
+      summary: Identify a user and set person properties
+      operationId: identifyPerson
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentifyRequest'
+      responses:
+        '200':
+          description: Person identified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/alias:
+    post:
+      tags: [Ingestion]
+      summary: Link two distinct IDs to the same person
+      operationId: aliasPerson
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AliasRequest'
+      responses:
+        '200':
+          description: Alias linked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects:
+    get:
+      tags: [Projects]
+      summary: List projects
+      operationId: listProjects
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Project'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Projects]
+      summary: Create a new project
+      operationId: createProject
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
+      responses:
+        '201':
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Duplicate project name
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/projects/{projectID}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    get:
+      tags: [Projects]
+      summary: Get project details
+      operationId: getProject
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Project details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    patch:
+      tags: [Projects]
+      summary: Update project
+      operationId: updateProject
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectRequest'
+      responses:
+        '200':
+          description: Project updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [Projects]
+      summary: Delete project
+      operationId: deleteProject
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Project deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/projects/{projectID}/purge-events:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    post:
+      tags: [Projects]
+      summary: Purge all events in a project
+      operationId: purgeProjectEvents
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Events purged
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/projects/{projectID}/rotate-key:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    post:
+      tags: [Projects]
+      summary: Rotate primary project API key
+      operationId: rotateProjectKey
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: New API key generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/projects/{projectID}/keys:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    get:
+      tags: [Projects]
+      summary: List project API keys
+      operationId: listAPIKeys
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of API keys
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/APIKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Projects]
+      summary: Create a new project API key
+      operationId: createAPIKey
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAPIKeyRequest'
+      responses:
+        '201':
+          description: API key created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIKey'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/projects/{projectID}/keys/{keyID}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - $ref: '#/components/parameters/KeyID'
+    delete:
+      tags: [Projects]
+      summary: Revoke an API key
+      operationId: revokeAPIKey
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: API key revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/projects/{projectID}/analytics/summary:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - $ref: '#/components/parameters/FromDate'
+      - $ref: '#/components/parameters/ToDate'
+    get:
+      tags: [Analytics]
+      summary: Get analytics summary metrics
+      operationId: getAnalyticsSummary
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Summary metrics
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/projects/{projectID}/analytics/top-events:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - $ref: '#/components/parameters/FromDate'
+      - $ref: '#/components/parameters/ToDate'
+    get:
+      tags: [Analytics]
+      summary: Get top events by count
+      operationId: getTopEvents
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Top events list
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/projects/{projectID}/analytics/volume:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - $ref: '#/components/parameters/FromDate'
+      - $ref: '#/components/parameters/ToDate'
+    get:
+      tags: [Analytics]
+      summary: Get event volume time series
+      operationId: getEventVolume
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Volume time series
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/projects/{projectID}/analytics/funnel:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - $ref: '#/components/parameters/FromDate'
+      - $ref: '#/components/parameters/ToDate'
+    get:
+      tags: [Analytics]
+      summary: Compute conversion funnel
+      operationId: getFunnel
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Funnel conversion steps
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/projects/{projectID}/analytics/funnel/dropoff:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - $ref: '#/components/parameters/FromDate'
+      - $ref: '#/components/parameters/ToDate'
+    get:
+      tags: [Analytics]
+      summary: Get funnel dropoff users
+      operationId: getFunnelDropoff
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Dropoff user list
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/projects/{projectID}/analytics/breakdown:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - $ref: '#/components/parameters/FromDate'
+      - $ref: '#/components/parameters/ToDate'
+    get:
+      tags: [Analytics]
+      summary: Get property breakdown
+      operationId: getPropertyBreakdown
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Property breakdown
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/projects/{projectID}/analytics/breakdown/devices:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - $ref: '#/components/parameters/FromDate'
+      - $ref: '#/components/parameters/ToDate'
+    get:
+      tags: [Analytics]
+      summary: Get device breakdown
+      operationId: getDeviceBreakdown
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Device breakdown
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/projects/{projectID}/analytics/breakdown/geo:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - $ref: '#/components/parameters/FromDate'
+      - $ref: '#/components/parameters/ToDate'
+    get:
+      tags: [Analytics]
+      summary: Get geographic breakdown
+      operationId: getGeoBreakdown
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Geographic breakdown
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/projects/{projectID}/analytics/retention:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - $ref: '#/components/parameters/FromDate'
+      - $ref: '#/components/parameters/ToDate'
+    get:
+      tags: [Analytics]
+      summary: Get cohort retention matrix
+      operationId: getRetention
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Retention cohorts
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/projects/{projectID}/analytics/sessions:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - $ref: '#/components/parameters/FromDate'
+      - $ref: '#/components/parameters/ToDate'
+    get:
+      tags: [Analytics]
+      summary: Get session analytics
+      operationId: getSessions
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Session metrics
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/projects/{projectID}/catalog/events:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    get:
+      tags: [Analytics]
+      summary: List distinct event names
+      operationId: listCatalogEvents
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Event catalog
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/projects/{projectID}/catalog/properties:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    get:
+      tags: [Analytics]
+      summary: List event property keys
+      operationId: listCatalogProperties
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Property keys catalog
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/projects/{projectID}/catalog/property-values:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    get:
+      tags: [Analytics]
+      summary: List values for a property key
+      operationId: listCatalogPropertyValues
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Property values
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/projects/{projectID}/analytics/users:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    get:
+      tags: [Analytics]
+      summary: List project users
+      operationId: listAnalyticsUsers
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Paginated user list
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/projects/{projectID}/analytics/users/{distinctId}/timeline:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - $ref: '#/components/parameters/DistinctIDPath'
+    get:
+      tags: [Analytics]
+      summary: Get event timeline for a user
+      operationId: getUserTimeline
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User event timeline
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/projects/{projectID}/live:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+    get:
+      tags: [Export]
+      summary: Stream live events via SSE
+      operationId: streamLiveEvents
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Server-Sent Events stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/projects/{projectID}/export:
+    parameters:
+      - $ref: '#/components/parameters/ProjectID'
+      - $ref: '#/components/parameters/FromDate'
+      - $ref: '#/components/parameters/ToDate'
+    get:
+      tags: [Export]
+      summary: Export raw events
+      operationId: exportEvents
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Exported events (JSON/CSV)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
